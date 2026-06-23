@@ -6,8 +6,8 @@ import re
 
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
-st.title(" Ranking Diocesano 2026 ")
-st.markdown("Monitoramento anual contínuo com consolidação de travas bimestrais.")
+st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
+st.markdown("Monitoramento anual contínuo com consolidação de travas bimestrais vigentes.")
 
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv"
@@ -77,11 +77,12 @@ def obter_nota_mes_planilha(row, mes):
         if c_low in [f"{m_low}_pontos", f"{m_low} pontos"]:
             if not pd.isna(row[col]) and str(row[col]).strip() != "":
                 return converter_pontos_em_nota(row[col])
-    return "E"
+    return "" # Retorna vazio se o mês não foi preenchido de verdade
 
 def calcular_ranking_justo_bimestral(row):
-    rank_final = "E"
+    notas_bimestres = []
     
+    # Processa os 6 blocos bimestrais do ano
     for i in range(0, 12, 2):
         m1 = MESES[i]
         m2 = MESES[i+1]
@@ -89,24 +90,28 @@ def calcular_ranking_justo_bimestral(row):
         nota1 = obter_nota_mes_planilha(row, m1)
         nota2 = obter_nota_mes_planilha(row, m2)
         
-        if nota1 == "E" and nota2 == "E":
+        # Só calcula o bimestre se pelo menos um dos dois meses foi avaliado
+        if nota1 == "" and nota2 == "":
             continue
             
-        idx1 = ORDEM_RANKING.index(nota1)
-        idx2 = ORDEM_RANKING.index(nota2)
+        # Trata o mês não preenchido como "E" dentro de um bimestre ativo
+        n1_valid = nota1 if nota1 != "" else "E"
+        n2_valid = nota2 if nota2 != "" else "E"
         
-        # Pega a menor nota do bloco bimestral
-        nota_deste_bimestre = nota1 if idx1 <= idx2 else nota2
+        idx1 = ORDEM_RANKING.index(n1_valid)
+        idx2 = ORDEM_RANKING.index(n2_valid)
         
-        if rank_final == "E":
-            rank_final = nota_deste_bimestre
-        else:
-            idx_acumulado = ORDEM_RANKING.index(rank_final)
-            idx_novo_bimestre = ORDEM_RANKING.index(nota_deste_bimestre)
-            if idx_novo_bimestre < idx_acumulado:
-                rank_final = nota_deste_bimestre
-                
-    return rank_final
+        # A nota do bimestre é ditada pelo menor desempenho
+        nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
+        notas_bimestres.append(nota_do_bimestre)
+        
+    # Se nenhum bimestre foi avaliado ainda no ano inteiro, a nota padrão é E
+    if not notas_bimestres:
+        return "E"
+        
+    # O Rank Geral final é a menor nota dentre os bimestres já fechados/ativos até agora
+    indices_finais = [ORDEM_RANKING.index(n) for n in notas_bimestres]
+    return ORDEM_RANKING[min(indices_finais)]
 
 @st.cache_data(ttl=1)
 def carregar_dados():
@@ -172,8 +177,13 @@ with col_ranking:
         
     df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
     
-    df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
-    df_ordenado = df_exibicao.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
+    # Para o visual não mostrar células vazias nos meses futuros, trocamos "" por "-" na exibição
+    df_visual = df_exibicao.copy()
+    for m in MESES:
+        df_visual[m] = df_visual[m].apply(lambda x: x if x != "" else "-")
+        
+    df_visual["_ordem"] = df_visual["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
+    df_ordenado = df_visual.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
     
