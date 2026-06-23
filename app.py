@@ -6,7 +6,7 @@ import re
 
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
-st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
+st.title(" Ranking Diocesano 2026 ")
 st.markdown("Monitoramento anual contínuo com consolidação de travas bimestrais.")
 
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
