@@ -118,7 +118,7 @@ def calcular_ranking(pontos):
     elif pontos == 3: return "B"
     elif pontos == 2: return "C"
     elif pontos == 1: return "D"
-    else: return "F"
+    else: return "E"
 
 # Divisão da tela
 col_form, col_ranking = st.columns([1.1, 1.4])
