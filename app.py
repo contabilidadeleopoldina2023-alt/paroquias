@@ -12,7 +12,7 @@ st.markdown("Monitoramento e ranking colaborativo de paróquias em tempo real.")
 # Links de Leitura e Gravação da sua Planilha Google
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Dados"
-URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
+URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbzG8HBTljt9RqSFz5Z6AUbkvCV19i1KYDzKWgaZlE502RR4PBM8qHtr1tvFf9MxKgCt/exec"
 
 # Lista Oficial Padrão de Segurança (64 Paróquias / Instituições Oficiais)
 LISTA_PAROQUIAS = [
