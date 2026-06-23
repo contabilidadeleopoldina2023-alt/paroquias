@@ -7,7 +7,7 @@ import re
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
 st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
-st.markdown("Monitoramento, histórico mensal e ranking dinâmico em tempo real.")
+st.markdown("Monitoramento, histórico bimestral consolidado e ranking justo em tempo real.")
 
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv"
@@ -58,29 +58,84 @@ def limpar_texto(txt):
     txt = re.sub(r'[^a-z0-9áéíóúâêôçãõ]', '', txt)
     return txt
 
+def converter_pontos_em_nota(pts):
+    try:
+        p = int(float(pts))
+    except:
+        return "E"
+    if p >= 4: return "A"
+    elif p == 3: return "B"
+    elif p == 2: return "C"
+    elif p == 1: return "D"
+    return "E"
+
+def obter_nota_mes(row, mes):
+    """Busca a nota do mês específico na linha do banco de dados"""
+    m_low = mes.lower()
+    # Verifica se existe coluna dedicada ao mês (ex: Janeiro_Nota ou Janeiro_Pontos)
+    for col in row.index:
+        c_low = str(col).lower()
+        if c_low in [f"{m_low}_nota", f"{m_low}_ranking", f"{m_low} nota"]:
+            val = str(row[col]).strip().upper()
+            if val in ORDEM_RANKING: return val
+        if c_low in [f"{m_low}_pontos", f"{m_low} pontos"]:
+            if not pd.isna(row[col]) and str(row[col]).strip() != "":
+                return converter_pontos_em_nota(row[col])
+                
+    # Fallback caso a planilha use a coluna genérica de "Ranking"/"Pontuação" para o mês selecionado atualmente
+    if st.session_state.get('mes_atual', 'Janeiro') == mes:
+        for col in row.index:
+            c_low = str(col).lower()
+            if "ranking" in c_low or "rank" in c_low:
+                val = str(row[col]).strip().upper()
+                if val in ORDEM_RANKING: return val
+            if "pontuação" in c_low or "pontuacao" in c_low:
+                if not pd.isna(row[col]) and str(row[col]).strip() != "":
+                    return converter_pontos_em_nota(row[col])
+    return "E"
+
+def calcular_ranking_justo_bimestral(row):
+    """LÓGICA SOLICITADA: Analisa de 2 em 2 meses e puxa o ranking consolidado para a menor nota"""
+    rank_final = "E"
+    primeiro_bimestre = True
+    
+    for i in range(0, 12, 2):
+        m1 = MESES[i]
+        m2 = MESES[i+1]
+        
+        nota1 = obter_nota_mes(row, m1)
+        nota2 = obter_nota_mes(row, m2)
+        
+        # Se nenhum dos dois meses foi avaliado ainda (ambos E), ignora o bimestre
+        if nota1 == "E" and nota2 == "E":
+            continue
+            
+        idx1 = ORDEM_RANKING.index(nota1)
+        idx2 = ORDEM_RANKING.index(nota2)
+        
+        # Pega a menor nota entre os dois meses do bimestre (Lógica Justa)
+        nota_bimestre = nota1 if idx1 <= idx2 else nota2
+        
+        if primeiro_bimestre:
+            rank_final = nota_bimestre
+            primeiro_bimestre = False
+        else:
+            # Consolida o histórico dos bimestres (prevalece o menor desempenho para manter o rigor)
+            idx_acumulado = ORDEM_RANKING.index(rank_final)
+            idx_novo_bim = ORDEM_RANKING.index(nota_bimestre)
+            if idx_novo_bim < idx_acumulado:
+                rank_final = nota_bimestre
+                
+    return rank_final
+
 @st.cache_data(ttl=1)
 def carregar_dados():
     try:
         df = pd.read_csv(URL_LEITURA)
         if df.empty: return pd.DataFrame()
-        
-        # Mapeia dinamicamente as colunas baseado no padrão identificado
-        mapeamento = {}
-        for col in df.columns:
-            col_limpa = col.strip().lower()
-            if "paróquia" in col_limpa or "paroquia" in col_limpa or "instituição" in col_limpa:
-                mapeamento[col] = "Paróquia_Original"
-            elif "saldo" in col_limpa: mapeamento[col] = "C1"
-            elif "anexo" in col_limpa: mapeamento[col] = "C2"
-            elif "mpm" in col_limpa: mapeamento[col] = "C3"
-            elif "arquivamento" in col_limpa: mapeamento[col] = "C4"
-            elif "tudo pronto" in col_limpa or "5º du" in col_limpa: mapeamento[col] = "C5"
-            elif "pontuação" in col_limpa or "pontuacao" in col_limpa: mapeamento[col] = "Pontos"
-            elif "ranking" in col_limpa: mapeamento[col] = "Rank_Planilha"
-            
-        df.rename(columns=mapeamento, inplace=True)
-        if "Paróquia_Original" in df.columns:
-            df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
+        orig_col = df.columns[0]
+        df.rename(columns={orig_col: "Paróquia_Original"}, inplace=True)
+        df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
         return df
     except Exception:
         return pd.DataFrame()
@@ -91,7 +146,8 @@ col_form, col_ranking = st.columns([1.1, 1.4])
 
 with col_form:
     st.subheader("📝 Votação Mensal Coletiva")
-    mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
+    mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES, key="mes_selecionado_widget")
+    st.session_state['mes_atual'] = mes_selecionado
     paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
     
     v1 = v2 = v3 = v4 = v5 = False
@@ -102,11 +158,12 @@ with col_form:
             row_p = filtro.iloc[0]
             def check_bool(val):
                 return str(val).strip().lower() in ["true", "1", "1.0", "sim", "checked", "x"]
-            v1 = check_bool(row_p.get("C1", False))
-            v2 = check_bool(row_p.get("C2", False))
-            v3 = check_bool(row_p.get("C3", False))
-            v4 = check_bool(row_p.get("C4", False))
-            v5 = check_bool(row_p.get("C5", False))
+            # Procura chaves dinâmicas ou genéricas
+            v1 = check_bool(row_p.get("C1", row_p.get(f"{mes_selecionado}_C1", False)))
+            v2 = check_bool(row_p.get("C2", row_p.get(f"{mes_selecionado}_C2", False)))
+            v3 = check_bool(row_p.get("C3", row_p.get(f"{mes_selecionado}_C3", False)))
+            v4 = check_bool(row_p.get("C4", row_p.get(f"{mes_selecionado}_C4", False)))
+            v5 = check_bool(row_p.get("C5", row_p.get(f"{mes_selecionado}_C5", False)))
         
     c1 = st.checkbox("1° Saldo em conformidade", value=v1, key="c1")
     c2 = st.checkbox("2° Anexos em dia", value=v2, key="c2")
@@ -116,18 +173,12 @@ with col_form:
     
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
         nova_pontuacao = sum([c1, c2, c3, c4, c5])
-        
-        # Converte pontos para Nota padrão
-        nota_final = "E"
-        if nova_pontuacao >= 4: nota_final = "A"
-        elif nova_pontuacao == 3: nota_final = "B"
-        elif nova_pontuacao == 2: nota_final = "C"
-        elif nova_pontuacao == 1: nota_final = "D"
+        nota_mes = converter_pontos_em_nota(nova_pontuacao)
         
         payload = {
             "paroquia": paroquia_selecionada, "mes": mes_selecionado,
             "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
-            "pontos": int(nova_pontuacao), "ranking": nota_final
+            "pontos": int(nova_pontuacao), "ranking": nota_mes
         }
         with st.spinner("Computando voto mensal..."):
             try:
@@ -142,29 +193,29 @@ with col_form:
                 st.error("Erro na conexão com o servidor da nuvem.")
 
 with col_ranking:
-    st.subheader("📊 Placar Geral Acumulado 2026")
+    st.subheader("📊 Placar Geral Bimestral Consolidado 2026")
     
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
     
     if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
-        df_exibicao = df_exibicao.merge(df_atual[["Chave_Limpa", "Rank_Planilha"]], on="Chave_Limpa", how="left")
+        df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
     
-    df_exibicao["Ranking_Calculado"] = df_exibicao["Rank_Planilha"].fillna("E")
-    df_exibicao["Ranking_Calculado"] = df_exibicao["Ranking_Calculado"].apply(lambda x: str(x).strip() if str(x).strip() in ORDEM_RANKING else "E")
-    
-    # Preenche as colunas visuais dos meses dinamicamente baseado no mês que o usuário selecionou no formulário
+    # Preenche as colunas individuais de cada mês na tabela visual
     for m in MESES:
-        if m == mes_selecionado:
-            df_exibicao[m] = df_exibicao["Ranking_Calculado"]
-        else:
-            df_exibicao[m] = "E"
-            
+        df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes(r, m), axis=1)
+        
+    # Executa a regra justa de 2 em 2 meses para gerar a nota final acumulada
+    df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
+    
     df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
     df_ordenado = df_exibicao.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
     st.dataframe(
         df_ordenado[colunas_visiveis],
-        hide_index=True, use_container_width=True
+        hide_index=True, use_container_width=True,
+        column_config={
+            "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆"),
+        }
     )
