@@ -7,11 +7,11 @@ import re
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
 st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
-st.markdown("Monitoramento com persistência de histórico e ranking bimestral consolidado.")
+st.markdown("Monitoramento anual contínuo com consolidação de travas bimestrais.")
 
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv"
-URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbzHHD5Nd-D21trEdpeaEJhREmh4loGYCEuD2J38NCfZ9oNBeguE4fgjhEIpdchdlf9r/exec"
+URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
 
 LISTA_PAROQUIAS = [
     "2. Paróquia do Sr Bom Jesus - ARGIRITA", "3. Paróquia de Santo Antônio - ASTOLFO DUTRA",
@@ -51,9 +51,6 @@ LISTA_PAROQUIAS = [
 MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
 
-if "memorias_locais" not in st.session_state:
-    st.session_state["memorias_locais"] = {}
-
 def limpar_texto(txt):
     if pd.isna(txt): return ""
     txt = str(txt).strip().lower()
@@ -70,41 +67,27 @@ def converter_pontos_em_nota(pts):
     elif p == 1: return "D"
     return "E"
 
-def extrair_historico_linha(row, paroquia_nome):
-    """Extrai as notas salvas localmente ou via dicionário persistente"""
-    chave_p = limpar_texto(paroquia_nome)
-    
-    # Se já tivermos dados salvos nesta sessão para essa paróquia, usa eles
-    if chave_p in st.session_state["memorias_locais"]:
-        return st.session_state["memorias_locais"][chave_p]
-        
-    historico_inicial = {m: "E" for m in MESES}
-    
-    # Resgata o valor atual que veio da planilha para o mês selecionado
+def obter_nota_mes_planilha(row, mes):
+    m_low = mes.lower()
     for col in row.index:
         c_low = str(col).lower()
-        if "ranking" in c_low or "rank" in c_low:
+        if c_low in [f"{m_low}_ranking", f"{m_low}_nota", f"{m_low} ranking", f"{m_low} nota"]:
             val = str(row[col]).strip().upper()
-            if val in ORDEM_RANKING:
-                historico_inicial[st.session_state.get('mes_selecionado', 'Janeiro')] = val
-        elif "pontuação" in c_low or "pontuacao" in c_low:
+            if val in ORDEM_RANKING: return val
+        if c_low in [f"{m_low}_pontos", f"{m_low} pontos"]:
             if not pd.isna(row[col]) and str(row[col]).strip() != "":
-                nota_calc = converter_pontos_em_nota(row[col])
-                historico_inicial[st.session_state.get('mes_selecionado', 'Janeiro')] = nota_calc
-                
-    st.session_state["memorias_locais"][chave_p] = historico_inicial
-    return historico_inicial
+                return converter_pontos_em_nota(row[col])
+    return "E"
 
-def calcular_ranking_justo_bimestral(historico_meses):
+def calcular_ranking_justo_bimestral(row):
     rank_final = "E"
-    primeiro_bimestre = True
     
     for i in range(0, 12, 2):
         m1 = MESES[i]
         m2 = MESES[i+1]
         
-        nota1 = historico_meses.get(m1, "E")
-        nota2 = historico_meses.get(m2, "E")
+        nota1 = obter_nota_mes_planilha(row, m1)
+        nota2 = obter_nota_mes_planilha(row, m2)
         
         if nota1 == "E" and nota2 == "E":
             continue
@@ -112,17 +95,16 @@ def calcular_ranking_justo_bimestral(historico_meses):
         idx1 = ORDEM_RANKING.index(nota1)
         idx2 = ORDEM_RANKING.index(nota2)
         
-        # Lógica justa: Pega a menor nota do bimestre
-        nota_bimestre = nota1 if idx1 <= idx2 else nota2
+        # Pega a menor nota do bloco bimestral
+        nota_deste_bimestre = nota1 if idx1 <= idx2 else nota2
         
-        if primeiro_bimestre:
-            rank_final = nota_bimestre
-            primeiro_bimestre = False
+        if rank_final == "E":
+            rank_final = nota_deste_bimestre
         else:
             idx_acumulado = ORDEM_RANKING.index(rank_final)
-            idx_novo_bim = ORDEM_RANKING.index(nota_bimestre)
-            if idx_novo_bim < idx_acumulado:
-                rank_final = nota_bimestre
+            idx_novo_bimestre = ORDEM_RANKING.index(nota_deste_bimestre)
+            if idx_novo_bimestre < idx_acumulado:
+                rank_final = nota_deste_bimestre
                 
     return rank_final
 
@@ -145,58 +127,39 @@ col_form, col_ranking = st.columns([1.1, 1.4])
 with col_form:
     st.subheader("📝 Votação Mensal Coletiva")
     mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
-    st.session_state['mes_selecionado'] = mes_selecionado
     paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
     
-    v1 = v2 = v3 = v4 = v5 = False
-    if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
-        chave_busca = limpar_texto(paroquia_selecionada)
-        filtro = df_atual[df_atual["Chave_Limpa"] == chave_busca]
-        if len(filtro) > 0:
-            row_p = filtro.iloc[0]
-            def check_bool(val):
-                return str(val).strip().lower() in ["true", "1", "1.0", "sim", "checked", "x"]
-            v1 = check_bool(row_p.get("Saldo em Conformidade", False))
-            v2 = check_bool(row_p.get("Anexos em Dia", False))
-            v3 = check_bool(row_p.get("MPM em Dia", False))
-            v4 = check_bool(row_p.get("Arquivamento Físico em Dia", False))
-            v5 = check_bool(row_p.get("Tudo Pronto até 5º DU", False))
-        
-    c1 = st.checkbox("1° Saldo em conformidade", value=v1, key="c1")
-    c2 = st.checkbox("2° Anexos em dia", value=v2, key="c2")
-    c3 = st.checkbox("3° MPM em dia", value=v3, key="c3")
-    c4 = st.checkbox("4° Arquivamento físico em dia", value=v4, key="c4")
-    c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", value=v5, key="c5")
+    c1 = st.checkbox("1° Saldo em conformidade", value=False)
+    c2 = st.checkbox("2° Anexos em dia", value=False)
+    c3 = st.checkbox("3° MPM em dia", value=False)
+    c4 = st.checkbox("4° Arquivamento físico em dia", value=False)
+    c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", value=False)
     
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
         nova_pontuacao = sum([c1, c2, c3, c4, c5])
         nota_mes = converter_pontos_em_nota(nova_pontuacao)
         
-        # Força o salvamento na memória de longo prazo do app para não sumir o mês anterior
-        chave_p = limpar_texto(paroquia_selecionada)
-        if chave_p not in st.session_state["memorias_locais"]:
-            st.session_state["memorias_locais"][chave_p] = {m: "E" for m in MESES}
-        st.session_state["memorias_locais"][chave_p][mes_selecionado] = nota_mes
-        
         payload = {
-            "paroquia": paroquia_selecionada, "mes": mes_selecionado,
+            "paroquia": paroquia_selecionada, 
+            "mes": mes_selecionado,
             "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
-            "pontos": int(nova_pontuacao), "ranking": nota_mes
+            "pontos": int(nova_pontuacao), 
+            "ranking": nota_mes
         }
-        with st.spinner("Computando voto mensal..."):
+        with st.spinner("Conectando com o Google Sheets..."):
             try:
                 resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload))
                 if "Sucesso" in resposta.text or "sucesso" in resposta.text.lower():
-                    st.success(f"Voto de {mes_selecionado} gravado e preservado com sucesso!")
+                    st.success(f"Avaliação de {mes_selecionado} enviada com sucesso!")
                     st.cache_data.clear()
                     st.rerun()
                 else:
-                    st.error(f"Erro no painel do Google: {resposta.text}")
+                    st.error(f"Erro de resposta: {resposta.text}")
             except Exception:
-                st.error("Erro na conexão com o servidor da nuvem.")
+                st.error("Erro técnico na comunicação em nuvem.")
 
 with col_ranking:
-    st.subheader("📊 Placar Geral Bimestral Consolidado 2026")
+    st.subheader("📊 Placar Geral Anual - 65 Paróquias")
     
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
@@ -204,30 +167,21 @@ with col_ranking:
     if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
         df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
         
-    # Inicializa colunas vazias
     for m in MESES:
-        df_exibicao[m] = "E"
-    df_exibicao["Ranking_Calculado"] = "E"
-    
-    # Popula linha por linha cruzando com a memória persistente interna
-    for idx, row in df_exibicao.iterrows():
-        p_nome = row["Paróquia / Instituição"]
-        historico_p = extrair_historico_linha(row, p_nome)
+        df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes_planilha(r, m), axis=1)
         
-        for m in MESES:
-            df_exibicao.at[idx, m] = historico_p.get(m, "E")
-            
-        df_exibicao.at[idx, "Ranking_Calculado"] = calcular_ranking_justo_bimestral(historico_p)
-            
+    df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
+    
     df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
     df_ordenado = df_exibicao.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
+    
     st.dataframe(
         df_ordenado[colunas_visiveis],
-        hide_index=True, use_container_width=True,
+        hide_index=True,
+        use_container_width=True,
         column_config={
-            "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆"),
+            "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆")
         }
-    )
     )
