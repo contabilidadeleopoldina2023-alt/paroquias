@@ -6,13 +6,15 @@ import json
 # Configuração da página do sistema
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
-st.title("⛪ Sistema de Avaliação Diocesano - Nuvem ☁️")
+st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
 st.markdown("Monitoramento e ranking colaborativo de paróquias em tempo real.")
 
 # Links de Leitura e Gravação da sua Planilha Google
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Dados"
-URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbzG8HBTljt9RqSFz5Z6AUbkvCV19i1KYDzKWgaZlE502RR4PBM8qHtr1tvFf9MxKgCt/exec"
+
+# ⚠️ LEMBRETE: Certifique-se de manter aqui o seu NOVO link /exec que você gerou por último!
+URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
 
 # Lista Oficial Padrão de Segurança (64 Paróquias / Instituições Oficiais)
 LISTA_PAROQUIAS = [
@@ -91,10 +93,10 @@ def criar_fallback_df():
         "Arquivamento Físico em Dia": [False] * len(LISTA_PAROQUIAS),
         "Tudo Pronto até 5º DU": [False] * len(LISTA_PAROQUIAS),
         "Pontuação": [0] * len(LISTA_PAROQUIAS),
-        "Ranking": ["F"] * len(LISTA_PAROQUIAS)
+        "Ranking": ["E"] * len(LISTA_PAROQUIAS) # Inicia todas como "E"
     })
 
-# Carregar dados em tempo real da planilha com trava de segurança se estiver vazia
+# Carregar dados em tempo real da planilha
 @st.cache_data(ttl=2)
 def carregar_dados():
     try:
@@ -106,19 +108,25 @@ def carregar_dados():
         for col in colunas_bool:
             if col in df.columns:
                 df[col] = df[col].fillna(False).astype(bool)
+        
+        # Garante que qualquer nulo no ranking vindo da planilha seja tratado como E
+        if "Ranking" in df.columns:
+            df["Ranking"] = df["Ranking"].fillna("E")
+            
         return df
     except Exception:
         return criar_fallback_df()
 
 df_atual = carregar_dados()
 
+# Nova escala de notas: de A+ até E
 def calcular_ranking(pontos):
     if pontos == 5: return "A+"
     elif pontos == 4: return "A"
     elif pontos == 3: return "B"
     elif pontos == 2: return "C"
     elif pontos == 1: return "D"
-    else: return "E"
+    else: return "E" # 0 pontos agora é classificação E
 
 # Divisão da tela
 col_form, col_ranking = st.columns([1.1, 1.4])
@@ -149,7 +157,6 @@ with col_form:
         nova_pontuacao = sum([c1, c2, c3, c4, c5])
         novo_ranking = calcular_ranking(nova_pontuacao)
         
-        # Envia os dados REAIS para a planilha do Google via API do Script
         payload = {
             "paroquia": paroquia_selecionada,
             "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
