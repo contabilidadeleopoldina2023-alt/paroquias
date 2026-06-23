@@ -6,7 +6,7 @@ import json
 # Configuração da página do sistema
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
-st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
+st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ")
 st.markdown("Monitoramento e ranking colaborativo de paróquias em tempo real.")
 
 # Links de Leitura e Gravação da sua Planilha Google
