@@ -159,7 +159,7 @@ with col_form:
             
         payload = {
             "paroquia": paroquia_selecionada,
-            "mes": mes_selecionada,
+            "mes": mes_selecionado,
             "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
             "pontos": int(nova_pontuacao),
             "ranking": novo_ranking
