@@ -5,7 +5,7 @@ import json
 
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
-st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
+st.title("Ranking Diocesano 2026 ")
 st.markdown("Monitoramento, histórico mensal e ranking dinâmico em tempo real.")
 
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
@@ -72,88 +72,4 @@ def calcular_ranking_regras(row):
     for m in MESES:
         col = f"{m}_Pontos"
         if col in row and not pd.isna(row[col]) and str(row[col]).strip() != "":
-            nota = converter_pontos_em_nota(row[col])
-            notas_por_mes.append(nota)
-            votos_computados += 1
-        else:
-            notas_por_mes.append("E")
-            
-    if votos_computados == 0:
-        return "E"
-        
-    rank_atual = "E"
-    manter_sempre_A = True
-    
-    for i in range(0, 12, 2):
-        n1 = notas_por_mes[i]
-        n2 = notas_por_mes[i+1]
-        
-        if i < votos_computados or (i+1) < votos_computados:
-            if n1 != "A" or n2 != "A":
-                manter_sempre_A = False
-                
-            idx1 = ORDEM_RANKING.index(n1)
-            idx2 = ORDEM_RANKING.index(n2)
-            
-            if n1 == n2:
-                rank_atual = n1
-            elif idx1 > idx2:
-                rank_atual = n2
-            elif idx1 < idx2:
-                rank_atual = n2
-                
-    if manter_sempre_A and votos_computados >= 1:
-        return "A" if votos_computados < 12 else "A+"
-        
-    return rank_atual
-
-def criar_fallback_df():
-    df = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
-    for m in MESES:
-        df[f"{m}_Pontos"] = 0
-    return df
-
-@st.cache_data(ttl=1)
-def carregar_dados():
-    try:
-        df = pd.read_csv(URL_LEITURA)
-        if df.empty or "Paróquia / Instituição" not in df.columns:
-            return criar_fallback_df()
-        
-        for m in MESES:
-            if f"{m}_Pontos" not in df.columns:
-                df[f"{m}_Pontos"] = 0
-        return df
-    except Exception:
-        return criar_fallback_df()
-
-df_atual = carregar_dados()
-
-col_form, col_ranking = st.columns([1.1, 1.4])
-
-with col_form:
-    st.subheader("📝 Votação Mensal Coletiva")
-    
-    mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
-    paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
-    
-    filtro = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada]
-    v1 = v2 = v3 = v4 = v5 = False
-    if len(filtro) > 0:
-        row_p = filtro.iloc[0]
-        v1 = bool(row_p.get(f"{mes_selecionado}_C1", False))
-        v2 = bool(row_p.get(f"{mes_selecionado}_C2", False))
-        v3 = bool(row_p.get(f"{mes_selecionado}_C3", False))
-        v4 = bool(row_p.get(f"{mes_selecionado}_C4", False))
-        v5 = bool(row_p.get(f"{mes_selecionado}_C5", False))
-        
-    c1 = st.checkbox("1° Saldo em conformidade", value=v1, key="c1")
-    c2 = st.checkbox("2° Anexos em dia", value=v2, key="c2")
-    c3 = st.checkbox("3° MPM em dia", value=v3, key="c3")
-    c4 = st.checkbox("4° Arquivamento físico em dia", value=v4, key="c4")
-    c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", value=v5, key="c5")
-    
-    if st.button("Salvar Avaliação Mensal", use_container_width=True):
-        nova_pontuacao = sum([c1, c2, c3, c4, c5])
-        
-        idx_p = df_atual
+            nota = converter_pontos_em_nota(row
