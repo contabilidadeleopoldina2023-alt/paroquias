@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import json
+import re
 
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
@@ -9,7 +10,6 @@ st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
 st.markdown("Monitoramento, histórico mensal e ranking dinâmico em tempo real.")
 
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
-# Removido o filtro fixo de aba (&sheet=Dados) para ler a página principal padrão automaticamente
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv"
 URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
 
@@ -51,15 +51,21 @@ LISTA_PAROQUIAS = [
 MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
 
+def limpar_texto(txt):
+    """Remove números iniciais, pontos, traços e espaços extras para uma comparação perfeita"""
+    if pd.isna(txt): return ""
+    txt = str(txt).strip().lower()
+    txt = re.sub(r'^\d+[\s\.\-\–\_]+', '', txt) # Remove o número inicial (ex: '2. ', '03 - ')
+    txt = re.sub(r'[^a-z0-9áéíóúâêôçãõ]', '', txt) # Mantém apenas letras e números básicos
+    return txt
+
 def calcular_pontos_linha_mes(row, mes):
-    # Procura coluna de pontos direta
     for sufixo in ["_Pontos", " Pontos", "_pontos", " pontos"]:
         col_pts = f"{mes}{sufixo}"
         if col_pts in row and not pd.isna(row[col_pts]) and str(row[col_pts]).strip() != "":
             try: return int(float(row[col_pts]))
             except: pass
             
-    # Fallback: Varre e soma critérios individuais
     soma = 0
     encontrou_criterio = False
     for crit in ["C1", "C2", "C3", "C4", "C5", "_C1", "_C2", "_C3", "_C4", "_C5"]:
@@ -83,10 +89,7 @@ def obter_notas_linha(row):
     notas = {}
     for m in MESES:
         pts = calcular_pontos_linha_mes(row, m)
-        if pts < 0:
-            notas[m] = "E"
-        else:
-            notas[m] = converter_pontos_em_nota(pts)
+        notas[m] = "E" if pts < 0 else converter_pontos_em_nota(pts)
     return notas
 
 def calcular_ranking_regras(row):
@@ -97,8 +100,10 @@ def calcular_ranking_regras(row):
     for m in MESES:
         if calcular_pontos_linha_mes(row, m) >= 0:
             votos_reais += 1
-            if str(row.get(f"{m}_C1", "")).strip() != "" or str(row.get(f"{m}_Pontos", "")).strip() != "":
-                algum_voto = True
+            algum_voto = True
+
+    if not algum_voto:
+        return "E"
 
     rank_atual = "E"
     manter_sempre_A = True
@@ -109,10 +114,7 @@ def calcular_ranking_regras(row):
         n1 = notas_por_mes[m1]
         n2 = notas_por_mes[m2]
         
-        p1 = calcular_pontos_linha_mes(row, m1)
-        p2 = calcular_pontos_linha_mes(row, m2)
-        
-        if p1 >= 0 or p2 >= 0:
+        if calcular_pontos_linha_mes(row, m1) >= 0 or calcular_pontos_linha_mes(row, m2) >= 0:
             if n1 != "A" or n2 != "A":
                 manter_sempre_A = False
             idx1 = ORDEM_RANKING.index(n1)
@@ -130,9 +132,10 @@ def carregar_dados():
     try:
         df = pd.read_csv(URL_LEITURA)
         if df.empty: return pd.DataFrame()
-        # Normalização de strings da primeira coluna
-        df.rename(columns={df.columns[0]: "Paróquia / Instituição"}, inplace=True)
-        df["Paróquia / Instituição"] = df["Paróquia / Instituição"].astype(str).str.strip()
+        orig_col = df.columns[0]
+        df.rename(columns={orig_col: "Paróquia_Original"}, inplace=True)
+        # Cria uma coluna de chaves limpas para o cruzamento inteligente
+        df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
         return df
     except Exception:
         return pd.DataFrame()
@@ -148,7 +151,8 @@ with col_form:
     
     v1 = v2 = v3 = v4 = v5 = False
     if not df_atual.empty:
-        filtro = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada.strip()]
+        chave_busca = limpar_texto(paroquia_selecionada)
+        filtro = df_atual[df_atual["Chave_Limpa"] == chave_busca]
         if len(filtro) > 0:
             row_p = filtro.iloc[0]
             def ler_c(c_nome):
@@ -167,7 +171,7 @@ with col_form:
     c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", value=v5, key="c5")
     
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
-        nova_pontuacao = sum([c1, c2, c3, c4, c4, c5])
+        nova_pontuacao = sum([c1, c2, c3, c4, c5])
         payload = {
             "paroquia": paroquia_selecionada, "mes": mes_selecionado,
             "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
@@ -189,8 +193,11 @@ with col_ranking:
     st.subheader("📊 Placar Geral Acumulado 2026")
     
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
+    df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
+    
     if not df_atual.empty:
-        df_exibicao = df_exibicao.merge(df_atual, on="Paróquia / Instituição", how="left")
+        # Cruza usando a Chave Limpa (ignorando números, espaços e acentos)
+        df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
     
     df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_regras, axis=1)
     df_exibicao["Ranking_Calculado"] = df_exibicao["Ranking_Calculado"].fillna("E")
@@ -201,19 +208,8 @@ with col_ranking:
     df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x))
     df_ordenado = df_exibicao.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     
+    colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
     st.dataframe(
-        df_ordenado[["Paróquia / Instituição", "Ranking_Calculado"] + MESES],
+        df_ordenado[colunas_visiveis],
         hide_index=True, use_container_width=True
     )
-
-# --- PAINEL DE DIAGNÓSTICO DE BANCO DE DADOS ---
-st.markdown("---")
-with st.expander("🔍 Painel Técnico - Diagnóstico da Planilha do Google (Clique para abrir)"):
-    if df_atual.empty:
-        st.error("❌ O Streamlit está puxando uma planilha completamente VAZIA ou a URL pública está desativada.")
-    else:
-        st.success(f"✅ Conexão estabelecida! Linhas detectadas no banco: {len(df_atual)}")
-        st.markdown("**Nomes de colunas reais que o Python encontrou na sua planilha:**")
-        st.write(list(df_atual.columns))
-        st.markdown("**Dados Brutos Recebidos do Google Sheets (Primeiras 3 linhas):**")
-        st.dataframe(df_atual.head(3))
