@@ -11,11 +11,10 @@ st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
 st.markdown("Monitoramento anual contínuo com consolidação de média progressiva bimestral.")
 
-# CONEXÃO DIRETA COM O SEU GOOGLE SHEETS E APPS SCRIPT
+# LINKS ATUALIZADOS E CONEXÃO DIRETA
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
-# Adicionado um timestamp dinâmico para forçar o Google a entregar os dados novos na hora
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&v={int(time.time())}"
-URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
+URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbzHHD5Nd-D21trEdpeaEJhREmh4loGYCEuD2J38NCfZ9oNBeguE4fgjhEIpdchdlf9r/exec"
 
 LISTA_PAROQUIAS = [
     "2. Paróquia do Sr Bom Jesus - ARGIRITA", "3. Paróquia de Santo Antônio - ASTOLFO DUTRA",
@@ -49,7 +48,7 @@ LISTA_PAROQUIAS = [
     "58. Paróquia N. S. da Consolação - ALÉM PARAÍBA", "59. Paróquia N S das Dores - DONA EUZÉBIA",
     "60. Paroqui N S Divino pranto - MURIAÉ", "61. Paróquia de Sta Bernadete - UBÁ",
     "62. P. São Crist e Imac Conceição - CATAGUASES", "63. Paróquia Santa Cruz - MURIAÉ",
-    "64. Paróquia de Santo Antônio - VISCONDE RIO BRANCO", "65. Paróquia São José Operário - UBÁ"
+    "64. Paróquia de Santo Antônio - VISCONDE RIO BRANCO"
 ]
 
 MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
@@ -62,18 +61,31 @@ def limpar_texto(txt):
     txt = re.sub(r'[^a-z0-9áéíóúâêôçãõ]', '', txt)
     return txt
 
+def converter_pontos_em_nota(val_str):
+    try:
+        p = int(float(str(val_str).strip()))
+        if p >= 4: return "A"
+        elif p == 3: return "B"
+        elif p == 2: return "C"
+        elif p == 1: return "D"
+    except:
+        pass
+    return "E"
+
 def obter_nota_mes_planilha(row, mes):
-    col_alvo = f"{mes}_Ranking"
-    if col_alvo in row.index:
-        val = str(row[col_alvo]).strip().upper()
+    col_rank = f"{mes}_Ranking"
+    if col_rank in row.index and not pd.isna(row[col_rank]):
+        val = str(row[col_rank]).strip().upper()
         if val in ORDEM_RANKING:
             return val
-            
-    col_alvo_espaco = f"{mes} Ranking"
-    if col_alvo_espaco in row.index:
-        val = str(row[col_alvo_espaco]).strip().upper()
-        if val in ORDEM_RANKING:
-            return val
+        if val.isdigit():
+            return converter_pontos_em_nota(val)
+
+    col_pontos = f"{mes}_Pontos"
+    if col_pontos in row.index and not pd.isna(row[col_pontos]):
+        val_pts = str(row[col_pontos]).strip()
+        if val_pts.upper() not in ["TRUE", "FALSE", ""]:
+            return converter_pontos_em_nota(val_pts)
             
     return ""
 
@@ -96,14 +108,12 @@ def calcular_ranking_justo_bimestral(row):
         idx1 = ORDEM_RANKING.index(n1_valid)
         idx2 = ORDEM_RANKING.index(n2_valid)
         
-        # Regra do Bimestre: Menor nota dita o bimestre
         nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
         pesos_bimestres.append(ORDEM_RANKING.index(nota_do_bimestre))
         
     if not pesos_bimestres:
         return "E"
         
-    # Média real dos bimestres avaliados
     media_pesos = sum(pesos_bimestres) / len(pesos_bimestres)
     idx_final = math.floor(media_pesos + 0.5)
     idx_final = max(0, min(idx_final, len(ORDEM_RANKING) - 1))
@@ -138,17 +148,11 @@ with col_form:
     
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
         nova_pontuacao = sum([c1, c2, c3, c4, c5])
-        
-        if nova_pontuacao >= 4: nota_mes = "A"
-        elif nova_pontuacao == 3: nota_mes = "B"
-        elif nova_pontuacao == 2: nota_mes = "C"
-        elif nova_pontuacao == 1: nota_mes = "D"
-        else: nota_mes = "E"
+        nota_mes = converter_pontos_em_nota(nova_pontuacao)
         
         payload = {
             "paroquia": paroquia_selecionada, 
             "mes": mes_selecionado,
-            "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
             "pontos": int(nova_pontuacao), 
             "ranking": nota_mes
         }
@@ -157,7 +161,7 @@ with col_form:
                 resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload))
                 if "Sucesso" in resposta.text or "sucesso" in resposta.text.lower():
                     st.success(f"Avaliação de {mes_selecionado} enviada com sucesso!")
-                    time.sleep(1) # Aguarda o Sheets processar
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error(f"Erro de resposta: {resposta.text}")
@@ -165,7 +169,7 @@ with col_form:
                 st.error("Erro técnico na comunicação em nuvem.")
 
 with col_ranking:
-    st.subheader("📊 Placar Geral Anual - 65 Paróquias")
+    st.subheader("📊 Placar Geral Anual - 64 Paróquias")
     
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
