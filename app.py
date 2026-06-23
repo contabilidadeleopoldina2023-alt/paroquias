@@ -58,31 +58,30 @@ def limpar_texto(txt):
     txt = re.sub(r'[^a-z0-9áéíóúâêôçãõ]', '', txt)
     return txt
 
-def converter_pontos_em_nota(pts):
-    try: p = int(float(pts))
-    except: return "E"
-    if p >= 4: return "A"
-    elif p == 3: return "B"
-    elif p == 2: return "C"
-    elif p == 1: return "D"
-    return "E"
+def remover_acentos(txt):
+    txt = txt.lower()
+    txt = re.sub(r'[março]', 'mar', txt) # simplifica março para evitar bugs
+    txt = re.sub(r'[áãâà]', 'a', txt)
+    txt = re.sub(r'[éê]', 'e', txt)
+    txt = re.sub(r'[óôõ]', 'o', txt)
+    txt = re.sub(r'[ú]', 'u', txt)
+    return txt
 
 def obter_nota_mes_planilha(row, mes):
-    m_low = mes.lower()
+    # Simplifica a busca removendo acentuações problemáticas das colunas
+    mes_busca = remover_acentos(mes)[:3] # Pega as 3 primeiras letras do mês (jan, fev, mar, abr...)
+    
     for col in row.index:
-        c_low = str(col).lower()
-        if c_low in [f"{m_low}_ranking", f"{m_low}_nota", f"{m_low} ranking", f"{m_low} nota"]:
+        c_low = remover_acentos(str(col))
+        if mes_busca in c_low and ("ranking" in c_low or "nota" in c_low):
             val = str(row[col]).strip().upper()
-            if val in ORDEM_RANKING: return val
-        if c_low in [f"{m_low}_pontos", f"{m_low} pontos"]:
-            if not pd.isna(row[col]) and str(row[col]).strip() != "":
-                return converter_pontos_em_nota(row[col])
-    return "" # Retorna vazio se o mês não foi preenchido de verdade
+            if val in ORDEM_RANKING: 
+                return val
+    return ""
 
 def calcular_ranking_justo_bimestral(row):
     notas_bimestres = []
     
-    # Processa os 6 blocos bimestrais do ano
     for i in range(0, 12, 2):
         m1 = MESES[i]
         m2 = MESES[i+1]
@@ -90,33 +89,29 @@ def calcular_ranking_justo_bimestral(row):
         nota1 = obter_nota_mes_planilha(row, m1)
         nota2 = obter_nota_mes_planilha(row, m2)
         
-        # Só calcula o bimestre se pelo menos um dos dois meses foi avaliado
         if nota1 == "" and nota2 == "":
             continue
             
-        # Trata o mês não preenchido como "E" dentro de um bimestre ativo
         n1_valid = nota1 if nota1 != "" else "E"
         n2_valid = nota2 if nota2 != "" else "E"
         
         idx1 = ORDEM_RANKING.index(n1_valid)
         idx2 = ORDEM_RANKING.index(n2_valid)
         
-        # A nota do bimestre é ditada pelo menor desempenho
         nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
         notas_bimestres.append(nota_do_bimestre)
         
-    # Se nenhum bimestre foi avaliado ainda no ano inteiro, a nota padrão é E
     if not notas_bimestres:
         return "E"
         
-    # O Rank Geral final é a menor nota dentre os bimestres já fechados/ativos até agora
     indices_finais = [ORDEM_RANKING.index(n) for n in notas_bimestres]
     return ORDEM_RANKING[min(indices_finais)]
 
-@st.cache_data(ttl=1)
+@st.cache_data(ttl=0) # Zera o cache para forçar a leitura em tempo real
 def carregar_dados():
     try:
-        df = pd.read_csv(URL_LEITURA)
+        # Força o pandas a ler todas as colunas como texto para evitar que números virem float
+        df = pd.read_csv(URL_LEITURA, dtype=str)
         if df.empty: return pd.DataFrame()
         orig_col = df.columns[0]
         df.rename(columns={orig_col: "Paróquia_Original"}, inplace=True)
@@ -142,7 +137,13 @@ with col_form:
     
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
         nova_pontuacao = sum([c1, c2, c3, c4, c5])
-        nota_mes = converter_pontos_em_nota(nova_pontuacao)
+        
+        # Define a nota com base nos pontos estritamente
+        if nova_pontuacao >= 4: nota_mes = "A"
+        elif nova_pontuacao == 3: nota_mes = "B"
+        elif nova_pontuacao == 2: nota_mes = "C"
+        elif nova_pontuacao == 1: nota_mes = "D"
+        else: nota_mes = "E"
         
         payload = {
             "paroquia": paroquia_selecionada, 
@@ -156,7 +157,6 @@ with col_form:
                 resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload))
                 if "Sucesso" in resposta.text or "sucesso" in resposta.text.lower():
                     st.success(f"Avaliação de {mes_selecionado} enviada com sucesso!")
-                    st.cache_data.clear()
                     st.rerun()
                 else:
                     st.error(f"Erro de resposta: {resposta.text}")
@@ -177,7 +177,6 @@ with col_ranking:
         
     df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
     
-    # Para o visual não mostrar células vazias nos meses futuros, trocamos "" por "-" na exibição
     df_visual = df_exibicao.copy()
     for m in MESES:
         df_visual[m] = df_visual[m].apply(lambda x: x if x != "" else "-")
