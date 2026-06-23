@@ -4,6 +4,7 @@ import requests
 import json
 import re
 import math
+import time
 
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
@@ -12,7 +13,8 @@ st.markdown("Monitoramento anual contínuo com consolidação de média progress
 
 # CONEXÃO DIRETA COM O SEU GOOGLE SHEETS E APPS SCRIPT
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
-URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
+# Adicionado um timestamp dinâmico para forçar o Google a entregar os dados novos na hora
+URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&v={int(time.time())}"
 URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
 
 LISTA_PAROQUIAS = [
@@ -85,7 +87,6 @@ def calcular_ranking_justo_bimestral(row):
         nota1 = obter_nota_mes_planilha(row, m1)
         nota2 = obter_nota_mes_planilha(row, m2)
         
-        # Só avalia se o bimestre tiver pelo menos um mês preenchido
         if nota1 == "" and nota2 == "":
             continue
             
@@ -95,27 +96,20 @@ def calcular_ranking_justo_bimestral(row):
         idx1 = ORDEM_RANKING.index(n1_valid)
         idx2 = ORDEM_RANKING.index(n2_valid)
         
-        # Regra Interna do Bimestre: Menor nota dita o bimestre
+        # Regra do Bimestre: Menor nota dita o bimestre
         nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
-        
-        # Guarda o peso numérico da nota desse bimestre (E=0, D=1, C=2, B=3, A=4, A+=5)
         pesos_bimestres.append(ORDEM_RANKING.index(nota_do_bimestre))
         
     if not pesos_bimestres:
         return "E"
         
-    # Média real dos bimestres avaliados até o momento
+    # Média real dos bimestres avaliados
     media_pesos = sum(pesos_bimestres) / len(pesos_bimestres)
-    
-    # Arredondamento matemático padrão para ser justo (ex: 2.5 vira 3, que é B)
     idx_final = math.floor(media_pesos + 0.5)
-    
-    # Garante que não estoure os limites da lista
     idx_final = max(0, min(idx_final, len(ORDEM_RANKING) - 1))
     
     return ORDEM_RANKING[idx_final]
 
-@st.cache_data(ttl=0)
 def carregar_dados():
     try:
         df = pd.read_csv(URL_LEITURA, dtype=str)
@@ -163,6 +157,7 @@ with col_form:
                 resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload))
                 if "Sucesso" in resposta.text or "sucesso" in resposta.text.lower():
                     st.success(f"Avaliação de {mes_selecionado} enviada com sucesso!")
+                    time.sleep(1) # Aguarda o Sheets processar
                     st.rerun()
                 else:
                     st.error(f"Erro de resposta: {resposta.text}")
