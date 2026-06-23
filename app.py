@@ -4,7 +4,7 @@ import requests
 import json
 
 # Configuração da página do sistema
-st.set_page_config(page_title="Ranking Diocesano - Nuvem", layout="wide")
+st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
 st.title("⛪ Sistema de Avaliação Diocesano - Nuvem ☁️")
 st.markdown("Monitoramento e ranking colaborativo de paróquias em tempo real.")
