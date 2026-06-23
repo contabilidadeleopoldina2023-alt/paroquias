@@ -50,13 +50,26 @@ LISTA_PAROQUIAS = [
 MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
 
-def converter_pontos_em_nota(pontos):
-    try:
-        if pd.isna(pontos) or str(pontos).strip() == "":
-            return "E"
-        pts = int(float(pontos))
-    except:
-        return "E"
+def calcular_pontos_linha_mes(row, mes):
+    # Se a coluna de pontos direta existir e for válida, usa ela
+    col_pts = f"{mes}_Pontos"
+    if col_pts in row and not pd.isna(row[col_pts]) and str(row[col_pts]).strip() != "":
+        try:
+            return int(float(row[col_pts]))
+        except:
+            pass
+            
+    # Caso contrário, soma os 5 critérios individuais salvos na planilha para aquele mês
+    soma = 0
+    for crit in ["C1", "C2", "C3", "C4", "C5"]:
+        col_c = f"{mes}_{crit}"
+        if col_c in row and not pd.isna(row[col_c]):
+            val = str(row[col_c]).strip().lower()
+            if val in ["true", "1", "1.0", "sim", "checked"]:
+                soma += 1
+    return soma
+
+def converter_pontos_em_nota(pts):
     if pts >= 5: return "A"
     elif pts == 4: return "A"
     elif pts == 3: return "B"
@@ -67,61 +80,61 @@ def converter_pontos_em_nota(pontos):
 def obter_notas_linha(row):
     notas = {}
     for m in MESES:
-        col = f"{m}_Pontos"
-        if col in row and not pd.isna(row[col]) and str(row[col]).strip() != "":
-            notas[m] = converter_pontos_em_nota(row[col])
-        else:
-            notas[m] = "E"
+        pts = calcular_pontos_linha_mes(row, m)
+        notas[m] = converter_pontos_em_nota(pts)
     return notas
 
 def calcular_ranking_regras(row):
     notas_por_mes = obter_notas_linha(row)
     
-    # Verifica se pelo menos algum mês foi votado no ano
+    # Verifica quantos meses realmente possuem critérios preenchidos (> 0) no ano
     votos_reais = 0
     for m in MESES:
-        col = f"{m}_Pontos"
-        if col in row and not pd.isna(row[col]) and str(row[col]).strip() != "":
+        if calcular_pontos_line_mes_existe(row, m):
             votos_reais += 1
             
-    if votos_reais == 0:
-        return "E"
-        
     rank_atual = "E"
     manter_sempre_A = True
+    algum_voto = False
     
-    # Percorre de 2 em 2 meses (Janeiro/Fevereiro, Março/Abril...)
     for i in range(0, 12, 2):
         m1 = MESES[i]
         m2 = MESES[i+1]
         n1 = notas_por_mes[m1]
         n2 = notas_por_mes[m2]
         
-        if n1 != "A" or n2 != "A":
-            manter_sempre_A = False
+        # Se pelo menos um dos meses do bimestre recebeu votos ou critérios
+        if calcular_pontos_linha_mes(row, m1) > 0 or calcular_pontos_linha_mes(row, m2) > 0 or calcular_pontos_line_mes_existe(row, m1) or calcular_pontos_line_mes_existe(row, m2):
+            algum_voto = True
+            if n1 != "A" or n2 != "A":
+                manter_sempre_A = False
+                
+            idx1 = ORDEM_RANKING.index(n1)
+            idx2 = ORDEM_RANKING.index(n2)
             
-        idx1 = ORDEM_RANKING.index(n1)
-        idx2 = ORDEM_RANKING.index(n2)
+            if n1 == n2:
+                rank_atual = n1
+            elif idx1 > idx2:
+                rank_atual = n2 # Primeiro alto, segundo baixo -> cai
+            elif idx1 < idx2:
+                rank_atual = n2 # Primeiro baixo, segundo alto -> sobe
+
+    if not algum_voto:
+        return "E"
         
-        # LÓGICA DO BIMESTRE SOLICITADA:
-        if n1 == n2:
-            rank_atual = n1 # Se mantiver a mesma nota, permanece nela
-        elif idx1 > idx2:
-            rank_atual = n2 # Primeiro alto e segundo baixo -> CAI (Assume a baixa)
-        elif idx1 < idx2:
-            rank_atual = n2 # Primeiro baixo e segundo alto -> SOBE (Assume a alta)
-            
-    # Quem permaneceu com "A" em todos os meses avaliados vira A+ apenas em Dezembro
-    if manter_sempre_A and votos_reais == 12:
-        return "A+"
+    if manter_sempre_A and votos_reais >= 1:
+        return "A" if votos_reais < 12 else "A+"
         
     return rank_atual
 
+def calcular_pontos_line_mes_existe(row, mes):
+    for j in ["C1", "C2", "C3", "C4", "C5", "Pontos"]:
+        if f"{mes}_{j}" in row and not pd.isna(row[f"{mes}_{j}"]) and str(row[f"{mes}_{j}"]).strip() != "":
+            return True
+    return False
+
 def criar_fallback_df():
-    df = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
-    for m in MESES:
-        df[f"{m}_Pontos"] = 0
-    return df
+    return pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
 
 @st.cache_data(ttl=1)
 def carregar_dados():
@@ -129,16 +142,12 @@ def carregar_dados():
         df = pd.read_csv(URL_LEITURA)
         if df.empty or "Paróquia / Instituição" not in df.columns:
             return criar_fallback_df()
-        for m in MESES:
-            if f"{m}_Pontos" not in df.columns:
-                df[f"{m}_Pontos"] = 0
         return df
     except Exception:
         return criar_fallback_df()
 
 df_atual = carregar_dados()
 
-# Divisão de layout na tela
 col_form, col_ranking = st.columns([1.1, 1.4])
 
 with col_form:
@@ -150,11 +159,16 @@ with col_form:
     v1 = v2 = v3 = v4 = v5 = False
     if len(filtro) > 0:
         row_p = filtro.iloc[0]
-        v1 = bool(row_p.get(f"{mes_selecionado}_C1", False))
-        v2 = bool(row_p.get(f"{mes_selecionado}_C2", False))
-        v3 = bool(row_p.get(f"{mes_selecionado}_C3", False))
-        v4 = bool(row_p.get(f"{mes_selecionado}_C4", False))
-        v5 = bool(row_p.get(f"{mes_selecionado}_C5", False))
+        
+        def ler_c(c_nome):
+            val = str(row_p.get(f"{mes_selecionado}_{c_nome}", "False")).strip().lower()
+            return val in ["true", "1", "1.0", "sim", "checked"]
+            
+        v1 = ler_c("C1")
+        v2 = ler_c("C2")
+        v3 = ler_c("C3")
+        v4 = ler_c("C4")
+        v5 = ler_c("C5")
         
     c1 = st.checkbox("1° Saldo em conformidade", value=v1, key="c1")
     c2 = st.checkbox("2° Anexos em dia", value=v2, key="c2")
@@ -164,19 +178,13 @@ with col_form:
     
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
         nova_pontuacao = sum([c1, c2, c3, c4, c5])
-        idx_p = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada].index
-        if len(idx_p) > 0:
-            df_atual.loc[idx_p[0], f"{mes_selecionado}_Pontos"] = nova_pontuacao
-            novo_ranking = calcular_ranking_regras(df_atual.loc[idx_p[0]])
-        else:
-            novo_ranking = converter_pontos_em_nota(nova_pontuacao)
-            
+        
         payload = {
             "paroquia": paroquia_selecionada,
             "mes": mes_selecionado,
             "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
             "pontos": int(nova_pontuacao),
-            "ranking": novo_ranking
+            "ranking": converter_pontos_em_nota(nova_pontuacao)
         }
         with st.spinner("Computando voto mensal..."):
             try:
@@ -193,23 +201,18 @@ with col_form:
 with col_ranking:
     st.subheader("📊 Placar Geral Acumulado 2026")
     
-    # Cruzamento base para garantir todas na lista
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao = df_exibicao.merge(df_atual, on="Paróquia / Instituição", how="left")
     
-    # Calcula os Rankings Consolidados
     df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_regras, axis=1)
     df_exibicao["Ranking_Calculado"] = df_exibicao["Ranking_Calculado"].fillna("E")
     
-    # Desmembra as notas individuais de cada mês para criar o Rank Mensal Visual!
     for m in MESES:
         df_exibicao[m] = df_exibicao.apply(lambda r: obter_notas_linha(r)[m], axis=1)
         
-    # Ordenação do placar (Melhores posições no topo)
     df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x))
     df_ordenado = df_exibicao.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     
-    # Colunas que vamos mostrar na tabela final do painel
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
     
     st.dataframe(
@@ -219,17 +222,11 @@ with col_ranking:
         column_config={
             "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="medium"),
             "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small"),
-            "Janeiro": st.column_config.TextColumn("Jan 📅"),
-            "Fevereiro": st.column_config.TextColumn("Fev 📅"),
-            "Março": st.column_config.TextColumn("Mar 📅"),
-            "Abril": st.column_config.TextColumn("Abr 📅"),
-            "Maio": st.column_config.TextColumn("Mai 📅"),
-            "Junho": st.column_config.TextColumn("Jun 📅"),
-            "Julho": st.column_config.TextColumn("Jul 📅"),
-            "Agosto": st.column_config.TextColumn("Ago 📅"),
-            "Setembro": st.column_config.TextColumn("Set 📅"),
-            "Outubro": st.column_config.TextColumn("Out 📅"),
-            "Novembro": st.column_config.TextColumn("Nov 📅"),
-            "Dezembro": st.column_config.TextColumn("Dez 📅"),
+            "Janeiro": st.column_config.TextColumn("Jan 📅"), "Fevereiro": st.column_config.TextColumn("Fev 📅"),
+            "Março": st.column_config.TextColumn("Mar 📅"), "Abril": st.column_config.TextColumn("Abr 📅"),
+            "Maio": st.column_config.TextColumn("Mai 📅"), "Junho": st.column_config.TextColumn("Jun 📅"),
+            "Julho": st.column_config.TextColumn("Jul 📅"), "Agosto": st.column_config.TextColumn("Ago 📅"),
+            "Setembro": st.column_config.TextColumn("Set 📅"), "Outubro": st.column_config.TextColumn("Out 📅"),
+            "Novembro": st.column_config.TextColumn("Nov 📅"), "Dezembro": st.column_config.TextColumn("Dez 📅"),
         }
     )
