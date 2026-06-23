@@ -3,16 +3,17 @@ import pandas as pd
 import requests
 import json
 import re
+import math
 
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
 st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
-st.markdown("Monitoramento anual contínuo com consolidação de travas bimestrais vigentes.")
+st.markdown("Monitoramento anual contínuo com consolidação de média progressiva bimestral.")
 
 # CONEXÃO DIRETA COM O SEU GOOGLE SHEETS E APPS SCRIPT
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
-URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbzHHD5Nd-D21trEdpeaEJhREmh4loGYCEuD2J38NCfZ9oNBeguE4fgjhEIpdchdlf9r/exec"
+URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
 
 LISTA_PAROQUIAS = [
     "2. Paróquia do Sr Bom Jesus - ARGIRITA", "3. Paróquia de Santo Antônio - ASTOLFO DUTRA",
@@ -75,7 +76,7 @@ def obter_nota_mes_planilha(row, mes):
     return ""
 
 def calcular_ranking_justo_bimestral(row):
-    notas_bimestres = []
+    pesos_bimestres = []
     
     for i in range(0, 12, 2):
         m1 = MESES[i]
@@ -84,6 +85,7 @@ def calcular_ranking_justo_bimestral(row):
         nota1 = obter_nota_mes_planilha(row, m1)
         nota2 = obter_nota_mes_planilha(row, m2)
         
+        # Só avalia se o bimestre tiver pelo menos um mês preenchido
         if nota1 == "" and nota2 == "":
             continue
             
@@ -93,14 +95,25 @@ def calcular_ranking_justo_bimestral(row):
         idx1 = ORDEM_RANKING.index(n1_valid)
         idx2 = ORDEM_RANKING.index(n2_valid)
         
+        # Regra Interna do Bimestre: Menor nota dita o bimestre
         nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
-        notas_bimestres.append(nota_do_bimestre)
         
-    if not notas_bimestres:
+        # Guarda o peso numérico da nota desse bimestre (E=0, D=1, C=2, B=3, A=4, A+=5)
+        pesos_bimestres.append(ORDEM_RANKING.index(nota_do_bimestre))
+        
+    if not pesos_bimestres:
         return "E"
         
-    indices_finais = [ORDEM_RANKING.index(n) for n in notas_bimestres]
-    return ORDEM_RANKING[min(indices_finais)]
+    # Média real dos bimestres avaliados até o momento
+    media_pesos = sum(pesos_bimestres) / len(pesos_bimestres)
+    
+    # Arredondamento matemático padrão para ser justo (ex: 2.5 vira 3, que é B)
+    idx_final = math.floor(media_pesos + 0.5)
+    
+    # Garante que não estoure os limites da lista
+    idx_final = max(0, min(idx_final, len(ORDEM_RANKING) - 1))
+    
+    return ORDEM_RANKING[idx_final]
 
 @st.cache_data(ttl=0)
 def carregar_dados():
