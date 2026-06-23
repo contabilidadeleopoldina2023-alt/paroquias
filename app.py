@@ -8,7 +8,6 @@ st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
 st.markdown("Monitoramento, histórico mensal e ranking dinâmico em tempo real.")
 
-# Configurações de links
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Dados"
 URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
@@ -52,51 +51,58 @@ MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "A
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
 
 def converter_pontos_em_nota(pontos):
-    if pontos >= 5: return "A"
-    elif pontos == 4: return "A"
-    elif pontos == 3: return "B"
-    elif pontos == 2: return "C"
-    elif pontos == 1: return "D"
+    try:
+        pts = int(float(pontos))
+    except:
+        pts = 0
+    if pts >= 5: return "A"
+    elif pts == 4: return "A"
+    elif pts == 3: return "B"
+    elif pts == 2: return "C"
+    elif pts == 1: return "D"
     return "E"
 
 def calcular_ranking_regras(row):
-    # Pega as notas mensais com base nas colunas de pontos existentes
     notas_por_mes = []
+    votos_computados = 0
+    
     for m in MESES:
         col = f"{m}_Pontos"
-        if col in row and not pd.isna(row[col]):
-            notas_por_mes.append(converter_pontos_em_nota(int(row[col])))
+        if col in row and not pd.isna(row[col]) and str(row[col]).strip() != "":
+            nota = converter_pontos_em_nota(row[col])
+            notas_por_mes.append(nota)
+            votos_computados += 1
         else:
-            notas_por_mes.append("E") # Padrão inicial
+            notas_por_mes.append("E")
             
-    # Aplica a regra de blocos de 2 meses (Bimestres acumulados)
+    if votos_computados == 0:
+        return "E"
+        
     rank_atual = "E"
     manter_sempre_A = True
     
-    # Avalia os bimestres: (Jan, Fev), (Mar, Abr), (Mai, Jun)...
     for i in range(0, 12, 2):
         n1 = notas_por_mes[i]
         n2 = notas_por_mes[i+1]
         
-        # Se algum mês do ano não foi nota Máxima (A), perde a chance de ser A+ no final
-        if n1 != "A" or n2 != "A":
-            manter_sempre_A = False
+        # Só interfere na nota se pelo menos um dos meses do bimestre tiver sido preenchido
+        if i < votos_computados or (i+1) < votos_computados:
+            if n1 != "A" or n2 != "A":
+                manter_sempre_A = False
+                
+            idx1 = ORDEM_RANKING.index(n1)
+            idx2 = ORDEM_RANKING.index(n2)
             
-        idx1 = ORDEM_RANKING.index(n1)
-        idx2 = ORDEM_RANKING.index(n2)
-        
-        if n1 == n2:
-            rank_atual = n1 # Se forem iguais, assume a nota deles
-        elif idx1 > idx2:
-            # Primeiro mês alto, segundo baixo -> CAI (Pega o pior ou mantém baixo)
-            rank_atual = n2
-        elif idx1 < idx2:
-            # Primeiro mês baixo, segundo alto -> SOBE (Assume o melhor)
-            rank_atual = n2
-            
-    # Regra bônus: Quem permanecer "A" de Janeiro a Dezembro vira A+
-    if manter_sempre_A and any(f"{m}_Pontos" in row for m in MESES):
-        return "A+"
+            if n1 == n2:
+                rank_atual = n1
+            elif idx1 > idx2:
+                rank_atual = n2 # Caiu no segundo mês
+            elif idx1 < idx2:
+                rank_atual = n2 # Subiu no segundo mês
+                
+    if manter_sempre_A and votos_computados >= 1:
+        # Se os meses avaliados até aqui forem todos A, já exibe como A provisório/definitivo
+        return "A" if votos_computados < 12 else "A+"
         
     return rank_atual
 
@@ -104,96 +110,21 @@ def criar_fallback_df():
     df = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     for m in MESES:
         df[f"{m}_Pontos"] = 0
-    df["Ranking_Geral"] = "E"
     return df
 
-@st.cache_data(ttl=2)
+@st.cache_data(ttl=1)
 def carregar_dados():
     try:
         df = pd.read_csv(URL_LEITURA)
         if df.empty or "Paróquia / Instituição" not in df.columns:
             return criar_fallback_df()
+        
+        # Se a paróquia existir mas faltarem colunas de meses no CSV, cria elas vazias
+        for m in MESES:
+            if f"{m}_Pontos" not in df.columns:
+                df[f"{m}_Pontos"] = 0
         return df
     except Exception:
         return criar_fallback_df()
 
-df_atual = carregar_dados()
-
-# Interface Gráfica
-col_form, col_ranking = st.columns([1.1, 1.4])
-
-with col_form:
-    st.subheader("📝 Votação Mensal Coletiva")
-    
-    # Seleção de Mês e Paróquia
-    mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
-    paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
-    
-    # Tenta resgatar os dados salvos específicos desse mês para não apagar o histórico
-    filtro = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada]
-    v1 = v2 = v3 = v4 = v5 = False
-    if len(filtro) > 0:
-        row = filtro.iloc[0]
-        v1 = bool(row.get(f"{mes_selecionado}_C1", False))
-        v2 = bool(row.get(f"{mes_selecionado}_C2", False))
-        v3 = bool(row.get(f"{mes_selecionado}_C3", False))
-        v4 = bool(row.get(f"{mes_selecionado}_C4", False))
-        v5 = bool(row.get(f"{mes_selecionado}_C5", False))
-        
-    c1 = st.checkbox("1° Saldo em conformidade", value=v1, key="c1")
-    c2 = st.checkbox("2° Anexos em dia", value=v2, key="c2")
-    c3 = st.checkbox("3° MPM em dia", value=v3, key="c3")
-    c4 = st.checkbox("4° Arquivamento físico em dia", value=v4, key="c4")
-    c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", value=v5, key="c5")
-    
-    if st.button("Salvar Avaliação Mensal", use_container_width=True):
-        nova_pontuacao = sum([c1, c2, c3, c4, c5])
-        
-        # Simula a alteração local na memória para calcular o novo ranking geral correto
-        idx_p = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada].index
-        if len(idx_p) > 0:
-            df_atual.loc[idx_p[0], f"{mes_selecionado}_Pontos"] = nova_pontuacao
-            novo_ranking = calcular_ranking_regras(df_atual.loc[idx_p[0]])
-        else:
-            novo_ranking = converter_pontos_em_nota(nova_pontuacao)
-            
-        payload = {
-            "paroquia": paroquia_selecionada,
-            "mes": mes_selecionado,
-            "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
-            "pontos": int(nova_pontuacao),
-            "ranking": novo_ranking
-        }
-        
-        with st.spinner("Computando voto mensal..."):
-            try:
-                resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload))
-                if "Sucesso" in resposta.text:
-                    st.success(f"Voto de {mes_selecionado} gravado! Rank Geral atualizado.")
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.error(f"Erro no painel do Google: {resposta.text}")
-            except Exception:
-                st.error("Erro na conexão com o servidor da nuvem.")
-
-with col_ranking:
-    st.subheader("📊 Placar Geral Acumulado 2026")
-    
-    # Calcula os Rankings Finais de todas com base nas regras de bimestres/oscilação
-    df_exibicao = df_atual.copy()
-    df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_regras, axis=1)
-    
-    # Cria uma nota numérica invisível para ordenar a tabela de forma correta (A+ no topo)
-    df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x))
-    df_ordenado = df_exibicao.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
-    
-    st.dataframe(
-        df_ordenado[["Paróquia / Instituição", "Ranking_Calculado"]],
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição"),
-            "Ranking_Calculado": st.column_config.TextColumn("Rank Consolidado 🏆")
-        }
-    )
+df
