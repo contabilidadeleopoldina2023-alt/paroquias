@@ -52,90 +52,35 @@ MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "A
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
 
 def limpar_texto(txt):
-    """Remove números iniciais, pontos, traços e espaços extras para uma comparação perfeita"""
     if pd.isna(txt): return ""
     txt = str(txt).strip().lower()
-    txt = re.sub(r'^\d+[\s\.\-\–\_]+', '', txt) # Remove o número inicial (ex: '2. ', '03 - ')
-    txt = re.sub(r'[^a-z0-9áéíóúâêôçãõ]', '', txt) # Mantém apenas letras e números básicos
+    txt = re.sub(r'^\d+[\s\.\-\–\_]+', '', txt)
+    txt = re.sub(r'[^a-z0-9áéíóúâêôçãõ]', '', txt)
     return txt
-
-def calcular_pontos_linha_mes(row, mes):
-    for sufixo in ["_Pontos", " Pontos", "_pontos", " pontos"]:
-        col_pts = f"{mes}{sufixo}"
-        if col_pts in row and not pd.isna(row[col_pts]) and str(row[col_pts]).strip() != "":
-            try: return int(float(row[col_pts]))
-            except: pass
-            
-    soma = 0
-    encontrou_criterio = False
-    for crit in ["C1", "C2", "C3", "C4", "C5", "_C1", "_C2", "_C3", "_C4", "_C5"]:
-        col_c = f"{mes}_{crit}" if "_" not in crit else f"{mes}{crit}"
-        if col_c in row and not pd.isna(row[col_c]):
-            encontrou_criterio = True
-            val = str(row[col_c]).strip().lower()
-            if val in ["true", "1", "1.0", "sim", "checked", "x"]:
-                soma += 1
-    return soma if encontrou_criterio or soma > 0 else -1
-
-def converter_pontos_em_nota(pts):
-    if pts < 0: return "E"
-    if pts >= 4: return "A"
-    elif pts == 3: return "B"
-    elif pts == 2: return "C"
-    elif pts == 1: return "D"
-    return "E"
-
-def obter_notas_linha(row):
-    notas = {}
-    for m in MESES:
-        pts = calcular_pontos_linha_mes(row, m)
-        notas[m] = "E" if pts < 0 else converter_pontos_em_nota(pts)
-    return notas
-
-def calcular_ranking_regras(row):
-    notas_por_mes = obter_notas_linha(row)
-    votos_reais = 0
-    algum_voto = False
-    
-    for m in MESES:
-        if calcular_pontos_linha_mes(row, m) >= 0:
-            votos_reais += 1
-            algum_voto = True
-
-    if not algum_voto:
-        return "E"
-
-    rank_atual = "E"
-    manter_sempre_A = True
-    
-    for i in range(0, 12, 2):
-        m1 = MESES[i]
-        m2 = MESES[i+1]
-        n1 = notas_por_mes[m1]
-        n2 = notas_por_mes[m2]
-        
-        if calcular_pontos_linha_mes(row, m1) >= 0 or calcular_pontos_linha_mes(row, m2) >= 0:
-            if n1 != "A" or n2 != "A":
-                manter_sempre_A = False
-            idx1 = ORDEM_RANKING.index(n1)
-            idx2 = ORDEM_RANKING.index(n2)
-            if n1 == n2: rank_atual = n1
-            elif idx1 > idx2: rank_atual = n2
-            elif idx1 < idx2: rank_atual = n2
-
-    if manter_sempre_A and votos_reais >= 1:
-        return "A" if votos_reais < 12 else "A+"
-    return rank_atual
 
 @st.cache_data(ttl=1)
 def carregar_dados():
     try:
         df = pd.read_csv(URL_LEITURA)
         if df.empty: return pd.DataFrame()
-        orig_col = df.columns[0]
-        df.rename(columns={orig_col: "Paróquia_Original"}, inplace=True)
-        # Cria uma coluna de chaves limpas para o cruzamento inteligente
-        df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
+        
+        # Mapeia dinamicamente as colunas baseado no padrão identificado
+        mapeamento = {}
+        for col in df.columns:
+            col_limpa = col.strip().lower()
+            if "paróquia" in col_limpa or "paroquia" in col_limpa or "instituição" in col_limpa:
+                mapeamento[col] = "Paróquia_Original"
+            elif "saldo" in col_limpa: mapeamento[col] = "C1"
+            elif "anexo" in col_limpa: mapeamento[col] = "C2"
+            elif "mpm" in col_limpa: mapeamento[col] = "C3"
+            elif "arquivamento" in col_limpa: mapeamento[col] = "C4"
+            elif "tudo pronto" in col_limpa or "5º du" in col_limpa: mapeamento[col] = "C5"
+            elif "pontuação" in col_limpa or "pontuacao" in col_limpa: mapeamento[col] = "Pontos"
+            elif "ranking" in col_limpa: mapeamento[col] = "Rank_Planilha"
+            
+        df.rename(columns=mapeamento, inplace=True)
+        if "Paróquia_Original" in df.columns:
+            df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
         return df
     except Exception:
         return pd.DataFrame()
@@ -150,19 +95,18 @@ with col_form:
     paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
     
     v1 = v2 = v3 = v4 = v5 = False
-    if not df_atual.empty:
+    if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
         chave_busca = limpar_texto(paroquia_selecionada)
         filtro = df_atual[df_atual["Chave_Limpa"] == chave_busca]
         if len(filtro) > 0:
             row_p = filtro.iloc[0]
-            def ler_c(c_nome):
-                val = str(row_p.get(f"{mes_selecionado}_{c_nome}", row_p.get(f"{mes_selecionado} {c_nome}", "False"))).strip().lower()
-                return val in ["true", "1", "1.0", "sim", "checked", "x"]
-            v1 = ler_c("C1")
-            v2 = ler_c("C2")
-            v3 = ler_c("C3")
-            v4 = ler_c("C4")
-            v5 = ler_c("C5")
+            def check_bool(val):
+                return str(val).strip().lower() in ["true", "1", "1.0", "sim", "checked", "x"]
+            v1 = check_bool(row_p.get("C1", False))
+            v2 = check_bool(row_p.get("C2", False))
+            v3 = check_bool(row_p.get("C3", False))
+            v4 = check_bool(row_p.get("C4", False))
+            v5 = check_bool(row_p.get("C5", False))
         
     c1 = st.checkbox("1° Saldo em conformidade", value=v1, key="c1")
     c2 = st.checkbox("2° Anexos em dia", value=v2, key="c2")
@@ -172,10 +116,18 @@ with col_form:
     
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
         nova_pontuacao = sum([c1, c2, c3, c4, c5])
+        
+        # Converte pontos para Nota padrão
+        nota_final = "E"
+        if nova_pontuacao >= 4: nota_final = "A"
+        elif nova_pontuacao == 3: nota_final = "B"
+        elif nova_pontuacao == 2: nota_final = "C"
+        elif nova_pontuacao == 1: nota_final = "D"
+        
         payload = {
             "paroquia": paroquia_selecionada, "mes": mes_selecionado,
             "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
-            "pontos": int(nova_pontuacao), "ranking": converter_pontos_em_nota(nova_pontuacao)
+            "pontos": int(nova_pontuacao), "ranking": nota_final
         }
         with st.spinner("Computando voto mensal..."):
             try:
@@ -195,17 +147,20 @@ with col_ranking:
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
     
-    if not df_atual.empty:
-        # Cruza usando a Chave Limpa (ignorando números, espaços e acentos)
-        df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
+    if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
+        df_exibicao = df_exibicao.merge(df_atual[["Chave_Limpa", "Rank_Planilha"]], on="Chave_Limpa", how="left")
     
-    df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_regras, axis=1)
-    df_exibicao["Ranking_Calculado"] = df_exibicao["Ranking_Calculado"].fillna("E")
+    df_exibicao["Ranking_Calculado"] = df_exibicao["Rank_Planilha"].fillna("E")
+    df_exibicao["Ranking_Calculado"] = df_exibicao["Ranking_Calculado"].apply(lambda x: str(x).strip() if str(x).strip() in ORDEM_RANKING else "E")
     
+    # Preenche as colunas visuais dos meses dinamicamente baseado no mês que o usuário selecionou no formulário
     for m in MESES:
-        df_exibicao[m] = df_exibicao.apply(lambda r: obter_notas_linha(r)[m], axis=1)
-        
-    df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x))
+        if m == mes_selecionado:
+            df_exibicao[m] = df_exibicao["Ranking_Calculado"]
+        else:
+            df_exibicao[m] = "E"
+            
+    df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
     df_ordenado = df_exibicao.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
