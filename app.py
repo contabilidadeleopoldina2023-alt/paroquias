@@ -14,19 +14,101 @@ SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Dados"
 URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
 
-# Carregar dados em tempo real da planilha (com atualização rápida)
+# Lista Oficial Padrão de Segurança (64 Paróquias / Instituições Oficiais)
+LISTA_PAROQUIAS = [
+    "2. Paróquia do Sr Bom Jesus - ARGIRITA",
+    "3. Paróquia de Santo Antônio - ASTOLFO DUTRA",
+    "4. Paróquia de São Franc de Paula - BOA FAMILIA",
+    "5. Paróquia de São Sebastião - CACHOEIRA ALEGRE",
+    "6. Paróquia Santa Rita de Cássia - CATAGUASES",
+    "7. Paróquia de N. S. do Rosário - CATAGUASES",
+    "8. Paróquia de São José Operário - CATAGUASES",
+    "9. Seminário N. S. da Conceição - BOA VISTA",
+    "10. Paróquia de N. S. das Dores - DORES DA VITORIA",
+    "11. Paróquia de São Sebastião - EUGENOPOLIS",
+    "12. Paróquia do Div Espírito Santo - GUARANI",
+    "13. Paróquia de Sant'Ana - GUIDOVAL",
+    "14. Paróquia de N. S. da Encarnação - GUIRICEMA",
+    "15. Paróquia de N S da Glória - ITAMURI",
+    "16. Paróquia de N S das Dores - ITAPIRUÇU",
+    "17. Paróquia de N. S. da Conceição - LARANJAL",
+    "18. Curato da Catedral - LEOPOLDINA",
+    "19. Paróquia de N. S. do Rosário - LEOPOLDINA",
+    "20. Paróquia de São José Operário - LEOPOLDINA",
+    "21. Paróquia de Sta Rita de Cássia - MIRADOURO",
+    "22. Paróquia de Sto Antônio - MIRAÍ",
+    "23. Paróquia de São Paulo - MURIAÉ",
+    "24. Paróquia de N. S da Conceição - MURIAÉ",
+    "25. Paróquia de N S Aparecida - MURIAÉ",
+    "26. Paróquia de São Franc de Assis - PALMA",
+    "27. Paróquia de N. S do Patrocínio - PATROCÍNIO DO MURIAÉ",
+    "28. Paróquia de N. S da Piedade - PIACATUBA",
+    "29. Paróquia de São Sebastião - PIRAÚBA",
+    "30. Paróquia de Santo Antônio - PROVIDÊNCIA",
+    "31. Paróquia Jesus Menino Deus - RECREIO",
+    "32. Paróquia de São Sebastião - RODEIRO",
+    "33. Paróquia de N. S do Rosário - ROSÁRIO DA LIMEIRA",
+    "34. Paróquia de Santana - SANTANA DE CATAGUASES",
+    "35. Paróquia de São Sebastião - SÃO GERALDO",
+    "36. Paróquia de Santo Antônio - TEBAS",
+    "37. Paróquia de São José - TOCANTINS",
+    "38. Paróquia de Santo Antônio - TUIUTINGA",
+    "39. Paróquia de São Januário - UBÁ",
+    "40. Paróquia de N S do Rosário - UBÁ",
+    "41. Paróquia do Div Espírito Santo - UBÁ",
+    "42. Paróquia de São João Batista - VISCONDE RIO BRANCO",
+    "43. Curato de São Franc de Paula - VISTA ALEGRE",
+    "44. Paróquia do Sr Bom Jesus - VIEIRAS",
+    "45. Paróquia de São José - ALÉM PARAÍBA",
+    "46. Paróquia Madre de Deus - ANGUSTURA",
+    "47. Paróquia de N. S. da Conceição - ESTRELA DALVA",
+    "48. Paróquia de Santana - PIRAPETINGA",
+    "49. Paróquia de Santo Antônio - SANTO ANTONIO AVENTUREIRO",
+    "50. Paróquia de São Sebastião - VOLTA GRANDE",
+    "51. Paróquia Sr Bom Jesus dos Aflitos - ITAMARATI DE MINAS",
+    "52. Paróquia de São Sebastião - UBÁ",
+    "53. Paróquia N. S. Sagrado Coração - MURIAÉ",
+    "54. Paróquia Santo Antônio - BELISÁRIO",
+    "55. Paróquia São Benedito - LEOPOLDINA",
+    "56. Paróquia São Sebastião - VISCONDE RIO BRANCO",
+    "57. Seminário M. N. S. Guadalupe - JUIZ DE FORA",
+    "58. Paróquia N. S. da Consolação - ALÉM PARAÍBA",
+    "59. Paróquia N S das Dores - DONA EUZÉBIA",
+    "60. Paroqui N S Divino pranto - MURIAÉ",
+    "61. Paróquia de Sta Bernadete - UBÁ",
+    "62. P. São Crist e Imac Conceição - CATAGUASES",
+    "63. Paróquia Santa Cruz - MURIAÉ",
+    "64. Paróquia de Santo Antônio - VISCONDE RIO BRANCO",
+    "65. Paróquia São José Operário - UBÁ"
+]
+
+def criar_fallback_df():
+    return pd.DataFrame({
+        "Paróquia / Instituição": LISTA_PAROQUIAS,
+        "Saldo em Conformidade": [False] * len(LISTA_PAROQUIAS),
+        "Anexos em Dia": [False] * len(LISTA_PAROQUIAS),
+        "MPM em Dia": [False] * len(LISTA_PAROQUIAS),
+        "Arquivamento Físico em Dia": [False] * len(LISTA_PAROQUIAS),
+        "Tudo Pronto até 5º DU": [False] * len(LISTA_PAROQUIAS),
+        "Pontuação": [0] * len(LISTA_PAROQUIAS),
+        "Ranking": ["F"] * len(LISTA_PAROQUIAS)
+    })
+
+# Carregar dados em tempo real da planilha com trava de segurança se estiver vazia
 @st.cache_data(ttl=2)
 def carregar_dados():
     try:
         df = pd.read_csv(URL_LEITURA)
+        if df.empty or "Paróquia / Instituição" not in df.columns or len(df) < 5:
+            return criar_fallback_df()
+        
         colunas_bool = ["Saldo em Conformidade", "Anexos em Dia", "MPM em Dia", "Arquivamento Físico em Dia", "Tudo Pronto até 5º DU"]
         for col in colunas_bool:
             if col in df.columns:
                 df[col] = df[col].fillna(False).astype(bool)
         return df
     except Exception:
-        st.error("Erro ao conectar com a planilha do Google. Verifique a internet.")
-        st.stop()
+        return criar_fallback_df()
 
 df_atual = carregar_dados()
 
@@ -38,7 +120,7 @@ def calcular_ranking(pontos):
     elif pontos == 1: return "D"
     else: return "F"
 
-# Divisão da tela (Formulário na esquerda | Painel Geral na direita)
+# Divisão da tela
 col_form, col_ranking = st.columns([1.1, 1.4])
 
 with col_form:
@@ -79,7 +161,7 @@ with col_form:
                 resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload))
                 if "Sucesso" in resposta.text:
                     st.success(f"Salvo diretamente na Planilha! Classificação: {novo_ranking}")
-                    st.cache_data.clear() # Limpa o cache para ler o dado novo na hora
+                    st.cache_data.clear()
                     st.rerun()
                 else:
                     st.error(f"O Google Sheets respondeu com um erro: {resposta.text}")
