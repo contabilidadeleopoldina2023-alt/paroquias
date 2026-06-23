@@ -9,7 +9,8 @@ st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
 st.markdown("Monitoramento, histórico mensal e ranking dinâmico em tempo real.")
 
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
-URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Dados"
+# Removido o filtro fixo de aba (&sheet=Dados) para ler a página principal padrão automaticamente
+URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv"
 URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
 
 LISTA_PAROQUIAS = [
@@ -51,25 +52,28 @@ MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "A
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
 
 def calcular_pontos_linha_mes(row, mes):
-    col_pts = f"{mes}_Pontos"
-    if col_pts in row and not pd.isna(row[col_pts]) and str(row[col_pts]).strip() != "":
-        try:
-            return int(float(row[col_pts]))
-        except:
-            pass
+    # Procura coluna de pontos direta
+    for sufixo in ["_Pontos", " Pontos", "_pontos", " pontos"]:
+        col_pts = f"{mes}{sufixo}"
+        if col_pts in row and not pd.isna(row[col_pts]) and str(row[col_pts]).strip() != "":
+            try: return int(float(row[col_pts]))
+            except: pass
             
+    # Fallback: Varre e soma critérios individuais
     soma = 0
-    for crit in ["C1", "C2", "C3", "C4", "C5"]:
-        col_c = f"{mes}_{crit}"
+    encontrou_criterio = False
+    for crit in ["C1", "C2", "C3", "C4", "C5", "_C1", "_C2", "_C3", "_C4", "_C5"]:
+        col_c = f"{mes}_{crit}" if "_" not in crit else f"{mes}{crit}"
         if col_c in row and not pd.isna(row[col_c]):
+            encontrou_criterio = True
             val = str(row[col_c]).strip().lower()
-            if val in ["true", "1", "1.0", "sim", "checked"]:
+            if val in ["true", "1", "1.0", "sim", "checked", "x"]:
                 soma += 1
-    return soma
+    return soma if encontrou_criterio or soma > 0 else -1
 
 def converter_pontos_em_nota(pts):
-    if pts >= 5: return "A"
-    elif pts == 4: return "A"
+    if pts < 0: return "E"
+    if pts >= 4: return "A"
     elif pts == 3: return "B"
     elif pts == 2: return "C"
     elif pts == 1: return "D"
@@ -79,20 +83,25 @@ def obter_notas_linha(row):
     notas = {}
     for m in MESES:
         pts = calcular_pontos_linha_mes(row, m)
-        notas[m] = converter_pontos_em_nota(pts)
+        if pts < 0:
+            notas[m] = "E"
+        else:
+            notas[m] = converter_pontos_em_nota(pts)
     return notas
 
 def calcular_ranking_regras(row):
     notas_por_mes = obter_notas_linha(row)
-    
     votos_reais = 0
+    algum_voto = False
+    
     for m in MESES:
-        if calcular_pontos_line_mes_existe(row, m):
+        if calcular_pontos_linha_mes(row, m) >= 0:
             votos_reais += 1
-            
+            if str(row.get(f"{m}_C1", "")).strip() != "" or str(row.get(f"{m}_Pontos", "")).strip() != "":
+                algum_voto = True
+
     rank_atual = "E"
     manter_sempre_A = True
-    algum_voto = False
     
     for i in range(0, 12, 2):
         m1 = MESES[i]
@@ -100,40 +109,28 @@ def calcular_ranking_regras(row):
         n1 = notas_por_mes[m1]
         n2 = notas_por_mes[m2]
         
-        if calcular_pontos_linha_mes(row, m1) > 0 or calcular_pontos_linha_mes(row, m2) > 0 or calcular_pontos_line_mes_existe(row, m1) or calcular_pontos_line_mes_existe(row, m2):
-            algum_voto = True
+        p1 = calcular_pontos_linha_mes(row, m1)
+        p2 = calcular_pontos_linha_mes(row, m2)
+        
+        if p1 >= 0 or p2 >= 0:
             if n1 != "A" or n2 != "A":
                 manter_sempre_A = False
-                
             idx1 = ORDEM_RANKING.index(n1)
             idx2 = ORDEM_RANKING.index(n2)
-            
-            if n1 == n2:
-                rank_atual = n1
-            elif idx1 > idx2:
-                rank_atual = n2
-            elif idx1 < idx2:
-                rank_atual = n2
+            if n1 == n2: rank_atual = n1
+            elif idx1 > idx2: rank_atual = n2
+            elif idx1 < idx2: rank_atual = n2
 
-    if not algum_voto:
-        return "E"
     if manter_sempre_A and votos_reais >= 1:
         return "A" if votos_reais < 12 else "A+"
     return rank_atual
-
-def calcular_pontos_line_mes_existe(row, mes):
-    for j in ["C1", "C2", "C3", "C4", "C5", "Pontos"]:
-        if f"{mes}_{j}" in row and not pd.isna(row[f"{mes}_{j}"]) and str(row[f"{mes}_{j}"]).strip() != "":
-            return True
-    return False
 
 @st.cache_data(ttl=1)
 def carregar_dados():
     try:
         df = pd.read_csv(URL_LEITURA)
-        if df.empty:
-            return pd.DataFrame()
-        # Normalização forçada: Define a 1ª coluna da planilha com o nome padrão
+        if df.empty: return pd.DataFrame()
+        # Normalização de strings da primeira coluna
         df.rename(columns={df.columns[0]: "Paróquia / Instituição"}, inplace=True)
         df["Paróquia / Instituição"] = df["Paróquia / Instituição"].astype(str).str.strip()
         return df
@@ -150,13 +147,13 @@ with col_form:
     paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
     
     v1 = v2 = v3 = v4 = v5 = False
-    if not df_atual.empty and "Paróquia / Instituição" in df_atual.columns:
+    if not df_atual.empty:
         filtro = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada.strip()]
         if len(filtro) > 0:
             row_p = filtro.iloc[0]
             def ler_c(c_nome):
-                val = str(row_p.get(f"{mes_selecionado}_{c_nome}", "False")).strip().lower()
-                return val in ["true", "1", "1.0", "sim", "checked"]
+                val = str(row_p.get(f"{mes_selecionado}_{c_nome}", row_p.get(f"{mes_selecionado} {c_nome}", "False"))).strip().lower()
+                return val in ["true", "1", "1.0", "sim", "checked", "x"]
             v1 = ler_c("C1")
             v2 = ler_c("C2")
             v3 = ler_c("C3")
@@ -170,18 +167,16 @@ with col_form:
     c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", value=v5, key="c5")
     
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
-        nova_pontuacao = sum([c1, c2, c3, c4, c5])
+        nova_pontuacao = sum([c1, c2, c3, c4, c4, c5])
         payload = {
-            "paroquia": paroquia_selecionada,
-            "mes": mes_selecionado,
+            "paroquia": paroquia_selecionada, "mes": mes_selecionado,
             "c1": c1, "c2": c2, "c3": c3, "c4": c4, "c5": c5,
-            "pontos": int(nova_pontuacao),
-            "ranking": converter_pontos_em_nota(nova_pontuacao)
+            "pontos": int(nova_pontuacao), "ranking": converter_pontos_em_nota(nova_pontuacao)
         }
         with st.spinner("Computando voto mensal..."):
             try:
                 resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload))
-                if "Sucesso" in resposta.text:
+                if "Sucesso" in resposta.text or "sucesso" in resposta.text.lower():
                     st.success(f"Voto de {mes_selecionado} gravado com sucesso!")
                     st.cache_data.clear()
                     st.rerun()
@@ -194,8 +189,6 @@ with col_ranking:
     st.subheader("📊 Placar Geral Acumulado 2026")
     
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
-    df_exibicao["Paróquia / Instituição"] = df_exibicao["Paróquia / Instituição"].str.strip()
-    
     if not df_atual.empty:
         df_exibicao = df_exibicao.merge(df_atual, on="Paróquia / Instituição", how="left")
     
@@ -208,20 +201,19 @@ with col_ranking:
     df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x))
     df_ordenado = df_exibicao.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     
-    colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
-    
     st.dataframe(
-        df_ordenado[colunas_visiveis],
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="medium"),
-            "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small"),
-            "Janeiro": st.column_config.TextColumn("Jan"), "Fevereiro": st.column_config.TextColumn("Fev"),
-            "Março": st.column_config.TextColumn("Mar"), "Abril": st.column_config.TextColumn("Abr"),
-            "Maio": st.column_config.TextColumn("Mai"), "Junho": st.column_config.TextColumn("Jun"),
-            "Julho": st.column_config.TextColumn("Jul"), "Agosto": st.column_config.TextColumn("Ago"),
-            "Setembro": st.column_config.TextColumn("Set"), "Outubro": st.column_config.TextColumn("Out"),
-            "Novembro": st.column_config.TextColumn("Nov"), "Dezembro": st.column_config.TextColumn("Dez"),
-        }
+        df_ordenado[["Paróquia / Instituição", "Ranking_Calculado"] + MESES],
+        hide_index=True, use_container_width=True
     )
+
+# --- PAINEL DE DIAGNÓSTICO DE BANCO DE DADOS ---
+st.markdown("---")
+with st.expander("🔍 Painel Técnico - Diagnóstico da Planilha do Google (Clique para abrir)"):
+    if df_atual.empty:
+        st.error("❌ O Streamlit está puxando uma planilha completamente VAZIA ou a URL pública está desativada.")
+    else:
+        st.success(f"✅ Conexão estabelecida! Linhas detectadas no banco: {len(df_atual)}")
+        st.markdown("**Nomes de colunas reais que o Python encontrou na sua planilha:**")
+        st.write(list(df_atual.columns))
+        st.markdown("**Dados Brutos Recebidos do Google Sheets (Primeiras 3 linhas):**")
+        st.dataframe(df_atual.head(3))
