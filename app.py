@@ -136,7 +136,7 @@ df_atual = carregar_dados()
 col_form, col_ranking = st.columns([1.1, 1.4])
 
 with col_form:
-    st.subheader("📝 Votação Mensal Coletiva")
+    st.subheader("📝 Votação Mensal ")
     mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
     paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
     
