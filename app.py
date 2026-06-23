@@ -58,25 +58,21 @@ def limpar_texto(txt):
     txt = re.sub(r'[^a-z0-9áéíóúâêôçãõ]', '', txt)
     return txt
 
-def remover_acentos(txt):
-    txt = txt.lower()
-    txt = re.sub(r'[março]', 'mar', txt) # simplifica março para evitar bugs
-    txt = re.sub(r'[áãâà]', 'a', txt)
-    txt = re.sub(r'[éê]', 'e', txt)
-    txt = re.sub(r'[óôõ]', 'o', txt)
-    txt = re.sub(r'[ú]', 'u', txt)
-    return txt
-
 def obter_nota_mes_planilha(row, mes):
-    # Simplifica a busca removendo acentuações problemáticas das colunas
-    mes_busca = remover_acentos(mes)[:3] # Pega as 3 primeiras letras do mês (jan, fev, mar, abr...)
-    
-    for col in row.index:
-        c_low = remover_acentos(str(col))
-        if mes_busca in c_low and ("ranking" in c_low or "nota" in c_low):
-            val = str(row[col]).strip().upper()
-            if val in ORDEM_RANKING: 
-                return val
+    # Procura diretamente pela coluna exata "Mês_Ranking" (ex: Janeiro_Ranking, Março_Ranking)
+    col_alvo = f"{mes}_Ranking"
+    if col_alvo in row.index:
+        val = str(row[col_alvo]).strip().upper()
+        if val in ORDEM_RANKING:
+            return val
+            
+    # Fallback caso a coluna na planilha use espaço ao invés de underline (ex: Janeiro Ranking)
+    col_alvo_espaco = f"{mes} Ranking"
+    if col_alvo_espaco in row.index:
+        val = str(row[col_alvo_espaco]).strip().upper()
+        if val in ORDEM_RANKING:
+            return val
+            
     return ""
 
 def calcular_ranking_justo_bimestral(row):
@@ -89,6 +85,7 @@ def calcular_ranking_justo_bimestral(row):
         nota1 = obter_nota_mes_planilha(row, m1)
         nota2 = obter_nota_mes_planilha(row, m2)
         
+        # Só calcula se pelo menos um dos meses do bimestre tiver nota lançada
         if nota1 == "" and nota2 == "":
             continue
             
@@ -98,19 +95,20 @@ def calcular_ranking_justo_bimestral(row):
         idx1 = ORDEM_RANKING.index(n1_valid)
         idx2 = ORDEM_RANKING.index(n2_valid)
         
+        # Pega a menor nota do bimestre
         nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
         notas_bimestres.append(nota_do_bimestre)
         
     if not notas_bimestres:
         return "E"
         
+    # O Rank Geral assume a menor nota de todos os bimestres já avaliados
     indices_finais = [ORDEM_RANKING.index(n) for n in notas_bimestres]
     return ORDEM_RANKING[min(indices_finais)]
 
-@st.cache_data(ttl=0) # Zera o cache para forçar a leitura em tempo real
+@st.cache_data(ttl=0)
 def carregar_dados():
     try:
-        # Força o pandas a ler todas as colunas como texto para evitar que números virem float
         df = pd.read_csv(URL_LEITURA, dtype=str)
         if df.empty: return pd.DataFrame()
         orig_col = df.columns[0]
@@ -138,7 +136,6 @@ with col_form:
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
         nova_pontuacao = sum([c1, c2, c3, c4, c5])
         
-        # Define a nota com base nos pontos estritamente
         if nova_pontuacao >= 4: nota_mes = "A"
         elif nova_pontuacao == 3: nota_mes = "B"
         elif nova_pontuacao == 2: nota_mes = "C"
