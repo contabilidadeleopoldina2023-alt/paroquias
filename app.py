@@ -9,9 +9,10 @@ st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
 st.markdown("Monitoramento anual contínuo com consolidação de travas bimestrais vigentes.")
 
+# CONEXÃO DIRETA COM O SEU GOOGLE SHEETS E APPS SCRIPT
 SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
-URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv"
-URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbwHpWJPxvpxpV5pLZH6MX06yZUHureAhawc5zhipW18HihVd1hac4G-89-SYWHgUXCP/exec"
+URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
+URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbzHHD5Nd-D21trEdpeaEJhREmh4loGYCEuD2J38NCfZ9oNBeguE4fgjhEIpdchdlf9r/exec"
 
 LISTA_PAROQUIAS = [
     "2. Paróquia do Sr Bom Jesus - ARGIRITA", "3. Paróquia de Santo Antônio - ASTOLFO DUTRA",
@@ -59,14 +60,12 @@ def limpar_texto(txt):
     return txt
 
 def obter_nota_mes_planilha(row, mes):
-    # Procura diretamente pela coluna exata "Mês_Ranking" (ex: Janeiro_Ranking, Março_Ranking)
     col_alvo = f"{mes}_Ranking"
     if col_alvo in row.index:
         val = str(row[col_alvo]).strip().upper()
         if val in ORDEM_RANKING:
             return val
             
-    # Fallback caso a coluna na planilha use espaço ao invés de underline (ex: Janeiro Ranking)
     col_alvo_espaco = f"{mes} Ranking"
     if col_alvo_espaco in row.index:
         val = str(row[col_alvo_espaco]).strip().upper()
@@ -85,7 +84,6 @@ def calcular_ranking_justo_bimestral(row):
         nota1 = obter_nota_mes_planilha(row, m1)
         nota2 = obter_nota_mes_planilha(row, m2)
         
-        # Só calcula se pelo menos um dos meses do bimestre tiver nota lançada
         if nota1 == "" and nota2 == "":
             continue
             
@@ -95,14 +93,12 @@ def calcular_ranking_justo_bimestral(row):
         idx1 = ORDEM_RANKING.index(n1_valid)
         idx2 = ORDEM_RANKING.index(n2_valid)
         
-        # Pega a menor nota do bimestre
         nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
         notas_bimestres.append(nota_do_bimestre)
         
     if not notas_bimestres:
         return "E"
         
-    # O Rank Geral assume a menor nota de todos os bimestres já avaliados
     indices_finais = [ORDEM_RANKING.index(n) for n in notas_bimestres]
     return ORDEM_RANKING[min(indices_finais)]
 
