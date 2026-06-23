@@ -8,7 +8,7 @@ import time
 
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
-st.title("⛪ Sistema de Avaliação - Ranking Diocesano 2026 ☁️")
+st.title(" Ranking das Paróquias 2026 ")
 st.markdown("Monitoramento anual contínuo com consolidação de média progressiva bimestral.")
 
 # LINKS ATUALIZADOS E CONEXÃO DIRETA
@@ -169,7 +169,7 @@ with col_form:
                 st.error("Erro técnico na comunicação em nuvem.")
 
 with col_ranking:
-    st.subheader("📊 Placar Geral Anual - 64 Paróquias")
+    st.subheader(" Placar Geral Anual - 64 Paróquias")
     
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
