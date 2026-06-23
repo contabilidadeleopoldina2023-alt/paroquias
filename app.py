@@ -64,37 +64,57 @@ def converter_pontos_em_nota(pontos):
     elif pts == 1: return "D"
     return "E"
 
-def calcular_ranking_regras(row):
-    notas_por_mes = []
-    votos_computados = 0
+def obter_notas_linha(row):
+    notas = {}
     for m in MESES:
         col = f"{m}_Pontos"
         if col in row and not pd.isna(row[col]) and str(row[col]).strip() != "":
-            nota = converter_pontos_em_nota(row[col])
-            notas_por_mes.append(nota)
-            votos_computados += 1
+            notas[m] = converter_pontos_em_nota(row[col])
         else:
-            notas_por_mes.append("E")
-    if votos_computados == 0:
+            notas[m] = "E"
+    return notas
+
+def calcular_ranking_regras(row):
+    notas_por_mes = obter_notas_linha(row)
+    
+    # Verifica se pelo menos algum mês foi votado no ano
+    votos_reais = 0
+    for m in MESES:
+        col = f"{m}_Pontos"
+        if col in row and not pd.isna(row[col]) and str(row[col]).strip() != "":
+            votos_reais += 1
+            
+    if votos_reais == 0:
         return "E"
+        
     rank_atual = "E"
     manter_sempre_A = True
+    
+    # Percorre de 2 em 2 meses (Janeiro/Fevereiro, Março/Abril...)
     for i in range(0, 12, 2):
-        n1 = notas_por_mes[i]
-        n2 = notas_por_mes[i+1]
-        if i < votos_computados or (i+1) < votos_computados:
-            if n1 != "A" or n2 != "A":
-                manter_sempre_A = False
-            idx1 = ORDEM_RANKING.index(n1)
-            idx2 = ORDEM_RANKING.index(n2)
-            if n1 == n2:
-                rank_atual = n1
-            elif idx1 > idx2:
-                rank_atual = n2
-            elif idx1 < idx2:
-                rank_atual = n2
-    if manter_sempre_A and votos_computados >= 1:
-        return "A" if votos_computados < 12 else "A+"
+        m1 = MESES[i]
+        m2 = MESES[i+1]
+        n1 = notas_por_mes[m1]
+        n2 = notas_por_mes[m2]
+        
+        if n1 != "A" or n2 != "A":
+            manter_sempre_A = False
+            
+        idx1 = ORDEM_RANKING.index(n1)
+        idx2 = ORDEM_RANKING.index(n2)
+        
+        # LÓGICA DO BIMESTRE SOLICITADA:
+        if n1 == n2:
+            rank_atual = n1 # Se mantiver a mesma nota, permanece nela
+        elif idx1 > idx2:
+            rank_atual = n2 # Primeiro alto e segundo baixo -> CAI (Assume a baixa)
+        elif idx1 < idx2:
+            rank_atual = n2 # Primeiro baixo e segundo alto -> SOBE (Assume a alta)
+            
+    # Quem permaneceu com "A" em todos os meses avaliados vira A+ apenas em Dezembro
+    if manter_sempre_A and votos_reais == 12:
+        return "A+"
+        
     return rank_atual
 
 def criar_fallback_df():
@@ -118,11 +138,12 @@ def carregar_dados():
 
 df_atual = carregar_dados()
 
+# Divisão de layout na tela
 col_form, col_ranking = st.columns([1.1, 1.4])
 
 with col_form:
     st.subheader("📝 Votação Mensal Coletiva")
-    mes_selecionado = st.selectbox("Selecione o Mês da Evaluation:", MESES)
+    mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
     paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
     
     filtro = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada]
@@ -171,19 +192,44 @@ with col_form:
 
 with col_ranking:
     st.subheader("📊 Placar Geral Acumulado 2026")
+    
+    # Cruzamento base para garantir todas na lista
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao = df_exibicao.merge(df_atual, on="Paróquia / Instituição", how="left")
+    
+    # Calcula os Rankings Consolidados
     df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_regras, axis=1)
     df_exibicao["Ranking_Calculado"] = df_exibicao["Ranking_Calculado"].fillna("E")
+    
+    # Desmembra as notas individuais de cada mês para criar o Rank Mensal Visual!
+    for m in MESES:
+        df_exibicao[m] = df_exibicao.apply(lambda r: obter_notas_linha(r)[m], axis=1)
+        
+    # Ordenação do placar (Melhores posições no topo)
     df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x))
     df_ordenado = df_exibicao.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     
+    # Colunas que vamos mostrar na tabela final do painel
+    colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
+    
     st.dataframe(
-        df_ordenado[["Paróquia / Instituição", "Ranking_Calculado"]],
+        df_ordenado[colunas_visiveis],
         hide_index=True,
         use_container_width=True,
         column_config={
-            "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição"),
-            "Ranking_Calculado": st.column_config.TextColumn("Rank Consolidado 🏆")
+            "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="medium"),
+            "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small"),
+            "Janeiro": st.column_config.TextColumn("Jan 📅"),
+            "Fevereiro": st.column_config.TextColumn("Fev 📅"),
+            "Março": st.column_config.TextColumn("Mar 📅"),
+            "Abril": st.column_config.TextColumn("Abr 📅"),
+            "Maio": st.column_config.TextColumn("Mai 📅"),
+            "Junho": st.column_config.TextColumn("Jun 📅"),
+            "Julho": st.column_config.TextColumn("Jul 📅"),
+            "Agosto": st.column_config.TextColumn("Ago 📅"),
+            "Setembro": st.column_config.TextColumn("Set 📅"),
+            "Outubro": st.column_config.TextColumn("Out 📅"),
+            "Novembro": st.column_config.TextColumn("Nov 📅"),
+            "Dezembro": st.column_config.TextColumn("Dez 📅"),
         }
     )
