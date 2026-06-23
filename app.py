@@ -152,7 +152,7 @@ with col_form:
         # Simula a alteração local na memória para calcular o novo ranking geral correto
         idx_p = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada].index
         if len(idx_p) > 0:
-            df_atual.loc[idx_p[0], f"{mes_selecionada}_Pontos"] = nova_pontuacao
+            df_atual.loc[idx_p[0], f"{mes_selecionado}_Pontos"] = nova_pontuacao
             novo_ranking = calcular_ranking_regras(df_atual.loc[idx_p[0]])
         else:
             novo_ranking = converter_pontos_em_nota(nova_pontuacao)
