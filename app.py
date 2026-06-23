@@ -51,7 +51,6 @@ MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "A
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
 
 def calcular_pontos_linha_mes(row, mes):
-    # Se a coluna de pontos direta existir e for válida, usa ela
     col_pts = f"{mes}_Pontos"
     if col_pts in row and not pd.isna(row[col_pts]) and str(row[col_pts]).strip() != "":
         try:
@@ -59,7 +58,6 @@ def calcular_pontos_linha_mes(row, mes):
         except:
             pass
             
-    # Caso contrário, soma os 5 critérios individuais salvos na planilha para aquele mês
     soma = 0
     for crit in ["C1", "C2", "C3", "C4", "C5"]:
         col_c = f"{mes}_{crit}"
@@ -87,7 +85,6 @@ def obter_notas_linha(row):
 def calcular_ranking_regras(row):
     notas_por_mes = obter_notas_linha(row)
     
-    # Verifica quantos meses realmente possuem critérios preenchidos (> 0) no ano
     votos_reais = 0
     for m in MESES:
         if calcular_pontos_line_mes_existe(row, m):
@@ -103,7 +100,6 @@ def calcular_ranking_regras(row):
         n1 = notas_por_mes[m1]
         n2 = notas_por_mes[m2]
         
-        # Se pelo menos um dos meses do bimestre recebeu votos ou critérios
         if calcular_pontos_linha_mes(row, m1) > 0 or calcular_pontos_linha_mes(row, m2) > 0 or calcular_pontos_line_mes_existe(row, m1) or calcular_pontos_line_mes_existe(row, m2):
             algum_voto = True
             if n1 != "A" or n2 != "A":
@@ -115,16 +111,14 @@ def calcular_ranking_regras(row):
             if n1 == n2:
                 rank_atual = n1
             elif idx1 > idx2:
-                rank_atual = n2 # Primeiro alto, segundo baixo -> cai
+                rank_atual = n2
             elif idx1 < idx2:
-                rank_atual = n2 # Primeiro baixo, segundo alto -> sobe
+                rank_atual = n2
 
     if not algum_voto:
         return "E"
-        
     if manter_sempre_A and votos_reais >= 1:
         return "A" if votos_reais < 12 else "A+"
-        
     return rank_atual
 
 def calcular_pontos_line_mes_existe(row, mes):
@@ -133,18 +127,18 @@ def calcular_pontos_line_mes_existe(row, mes):
             return True
     return False
 
-def criar_fallback_df():
-    return pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
-
 @st.cache_data(ttl=1)
 def carregar_dados():
     try:
         df = pd.read_csv(URL_LEITURA)
-        if df.empty or "Paróquia / Instituição" not in df.columns:
-            return criar_fallback_df()
+        if df.empty:
+            return pd.DataFrame()
+        # Normalização forçada: Define a 1ª coluna da planilha com o nome padrão
+        df.rename(columns={df.columns[0]: "Paróquia / Instituição"}, inplace=True)
+        df["Paróquia / Instituição"] = df["Paróquia / Instituição"].astype(str).str.strip()
         return df
     except Exception:
-        return criar_fallback_df()
+        return pd.DataFrame()
 
 df_atual = carregar_dados()
 
@@ -155,20 +149,19 @@ with col_form:
     mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
     paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
     
-    filtro = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada]
     v1 = v2 = v3 = v4 = v5 = False
-    if len(filtro) > 0:
-        row_p = filtro.iloc[0]
-        
-        def ler_c(c_nome):
-            val = str(row_p.get(f"{mes_selecionado}_{c_nome}", "False")).strip().lower()
-            return val in ["true", "1", "1.0", "sim", "checked"]
-            
-        v1 = ler_c("C1")
-        v2 = ler_c("C2")
-        v3 = ler_c("C3")
-        v4 = ler_c("C4")
-        v5 = ler_c("C5")
+    if not df_atual.empty and "Paróquia / Instituição" in df_atual.columns:
+        filtro = df_atual[df_atual["Paróquia / Instituição"] == paroquia_selecionada.strip()]
+        if len(filtro) > 0:
+            row_p = filtro.iloc[0]
+            def ler_c(c_nome):
+                val = str(row_p.get(f"{mes_selecionado}_{c_nome}", "False")).strip().lower()
+                return val in ["true", "1", "1.0", "sim", "checked"]
+            v1 = ler_c("C1")
+            v2 = ler_c("C2")
+            v3 = ler_c("C3")
+            v4 = ler_c("C4")
+            v5 = ler_c("C5")
         
     c1 = st.checkbox("1° Saldo em conformidade", value=v1, key="c1")
     c2 = st.checkbox("2° Anexos em dia", value=v2, key="c2")
@@ -178,7 +171,6 @@ with col_form:
     
     if st.button("Salvar Avaliação Mensal", use_container_width=True):
         nova_pontuacao = sum([c1, c2, c3, c4, c5])
-        
         payload = {
             "paroquia": paroquia_selecionada,
             "mes": mes_selecionado,
@@ -202,7 +194,10 @@ with col_ranking:
     st.subheader("📊 Placar Geral Acumulado 2026")
     
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
-    df_exibicao = df_exibicao.merge(df_atual, on="Paróquia / Instituição", how="left")
+    df_exibicao["Paróquia / Instituição"] = df_exibicao["Paróquia / Instituição"].str.strip()
+    
+    if not df_atual.empty:
+        df_exibicao = df_exibicao.merge(df_atual, on="Paróquia / Instituição", how="left")
     
     df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_regras, axis=1)
     df_exibicao["Ranking_Calculado"] = df_exibicao["Ranking_Calculado"].fillna("E")
@@ -222,11 +217,11 @@ with col_ranking:
         column_config={
             "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="medium"),
             "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small"),
-            "Janeiro": st.column_config.TextColumn("Jan 📅"), "Fevereiro": st.column_config.TextColumn("Fev 📅"),
-            "Março": st.column_config.TextColumn("Mar 📅"), "Abril": st.column_config.TextColumn("Abr 📅"),
-            "Maio": st.column_config.TextColumn("Mai 📅"), "Junho": st.column_config.TextColumn("Jun 📅"),
-            "Julho": st.column_config.TextColumn("Jul 📅"), "Agosto": st.column_config.TextColumn("Ago 📅"),
-            "Setembro": st.column_config.TextColumn("Set 📅"), "Outubro": st.column_config.TextColumn("Out 📅"),
-            "Novembro": st.column_config.TextColumn("Nov 📅"), "Dezembro": st.column_config.TextColumn("Dez 📅"),
+            "Janeiro": st.column_config.TextColumn("Jan"), "Fevereiro": st.column_config.TextColumn("Fev"),
+            "Março": st.column_config.TextColumn("Mar"), "Abril": st.column_config.TextColumn("Abr"),
+            "Maio": st.column_config.TextColumn("Mai"), "Junho": st.column_config.TextColumn("Jun"),
+            "Julho": st.column_config.TextColumn("Jul"), "Agosto": st.column_config.TextColumn("Ago"),
+            "Setembro": st.column_config.TextColumn("Set"), "Outubro": st.column_config.TextColumn("Out"),
+            "Novembro": st.column_config.TextColumn("Nov"), "Dezembro": st.column_config.TextColumn("Dez"),
         }
     )
