@@ -31,13 +31,14 @@ if FALTANTES:
     logging.critical(f"Segredos ausentes no st.secrets: {FALTANTES}")
     st.stop()
 
-# Nota: Substitua ADMIN_PASSWORD por ADMIN_PASSWORD_HASH (gerado via PBKDF2 ou SHA256 forte)
 SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
 URL_GRAVACAO = st.secrets["URL_GRAVACAO"]
-ADMIN_PASSWORD_HASH = st.secrets["ADMIN_PASSWORD_HASH"]
-API_SECRET_KEY = st.secrets["API_SECRET_KEY"].encode('utf-8')
 
-# URL de Leitura - Removido o timestamp dinâmico daqui para permitir o cacheamento correto
+# Garante que qualquer quebra de linha ou espaço vindo do arquivo de configuração seja ignorado
+ADMIN_PASSWORD_HASH = str(st.secrets["ADMIN_PASSWORD_HASH"]).strip()
+API_SECRET_KEY = str(st.secrets["API_SECRET_KEY"]).strip().encode('utf-8')
+
+# URL de Leitura
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
 
 # --- LISTA OFICIAL DE PARÓQUIAS (64 itens) ---
@@ -85,8 +86,9 @@ MAPA_EMOJIS = {
 
 # --- FUNÇÕES DE SEGURANÇA E TRATAMENTO ---
 def verificar_senha(senha_candidata):
-    """Verifica a senha usando hashing seguro para mitigar ataques de temporização."""
-    senha_hash = hashlib.sha256(senha_candidata.encode('utf-8')).hexdigest()
+    """Verifica a senha usando hashing seguro limpando espaços acidentais."""
+    senha_limpa = str(senha_candidata).strip()
+    senha_hash = hashlib.sha256(senha_limpa.encode('utf-8')).hexdigest()
     return hmac.compare_digest(senha_hash, ADMIN_PASSWORD_HASH)
 
 def gerar_token_assinatura(payload_dict):
@@ -155,9 +157,7 @@ def calcular_ranking_justo_bimestral(row):
 
 @st.cache_data(ttl=60)
 def carregar_dados_da_nuvem(url):
-    """Carrega os dados de forma segura. O TTL de 60 segundos impede abusos no servidor."""
     try:
-        # Passa cabeçalhos genéricos para não identificar comportamentos automatizados padrão
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code != 200:
@@ -261,7 +261,7 @@ with col_form:
                         logging.error(f"Erro na API Remota. Status: {resposta.status_code}. Resposta: {resposta.text}")
                 except Exception as e:
                     st.error("Falha temporária de rede. Tente novamente mais tarde.")
-                    logging.error(f"Exceção capturada no tráfego de saída: {str(e)}")
+                    logging.error(f"Exceção capturada no tráfego de acesso: {str(e)}")
 
 with col_ranking:
     st.subheader(f"🏆 Placar Geral Anual - {len(LISTA_PAROQUIAS)} Paróquias")
