@@ -31,8 +31,8 @@ if FALTANTES:
     logging.critical(f"Segredos ausentes no st.secrets: {FALTANTES}")
     st.stop()
 
-SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
-URL_GRAVACAO = st.secrets["URL_GRAVACAO"]
+SPREADSHEET_ID = str(st.secrets["SPREADSHEET_ID"]).strip()
+URL_GRAVACAO = str(st.secrets["URL_GRAVACAO"]).strip()
 
 # Garante que qualquer quebra de linha ou espaço vindo do arquivo de configuração seja ignorado
 ADMIN_PASSWORD_HASH = str(st.secrets["ADMIN_PASSWORD_HASH"]).strip()
@@ -86,7 +86,7 @@ MAPA_EMOJIS = {
 
 # --- FUNÇÕES DE SEGURANÇA E TRATAMENTO ---
 def verificar_senha(senha_candidata):
-    """Verifica a senha usando hashing seguro limpando espaços acidentais."""
+    """Verifica a senha tratando erros comuns de tipo int/str no Streamlit."""
     senha_limpa = str(senha_candidata).strip()
     senha_hash = hashlib.sha256(senha_limpa.encode('utf-8')).hexdigest()
     return hmac.compare_digest(senha_hash, ADMIN_PASSWORD_HASH)
