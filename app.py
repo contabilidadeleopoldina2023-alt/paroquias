@@ -193,16 +193,20 @@ with col_form:
     st.subheader("📝 Votação Mensal")
     
     if not st.session_state["autenticado"]:
-        senha_input = st.text_input("Insira a senha de administrador para votar:", type="password")
-        if st.button("Liberar Painel"):
-            if verificar_senha(senha_input):
-                st.session_state["autenticado"] = True
-                st.success("Acesso liberado!")
-                time.sleep(0.5)
-                st.rerun()
-            else:
-                st.error("Credenciais inválidas.")
-                logging.warning("Tentativa falha de login administrativo interceptada.")
+        # Formulário dedicado para evitar perda de dados no clique do botão
+        with st.form("form_login"):
+            senha_input = st.text_input("Insira a senha de administrador para votar:", type="password")
+            botao_liberar = st.form_submit_button("Liberar Painel", use_container_width=True)
+            
+            if botao_liberar:
+                if verificar_senha(senha_input):
+                    st.session_state["autenticado"] = True
+                    st.success("Acesso liberado!")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error("Credenciais inválidas. Verifique a senha inserida.")
+                    logging.warning("Tentativa falha de login administrativo interceptada.")
     else:
         st.info("🔓 Modo Administrador Ativo")
         if st.button("Sair/Bloquear"):
