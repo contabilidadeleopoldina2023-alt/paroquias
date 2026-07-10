@@ -5,28 +5,40 @@ import json
 import re
 import math
 import time
+import hashlib
+import hmac
+import secrets
+import logging
+
+# Configuração estrita de Logs internos (nunca exibir para o cliente)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
+# Forçar ocultação de detalhes de erro do Streamlit (Configuração programática preventiva)
+st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>", unsafe_allow_html=True)
+
 st.title("🏆 Ranking das Paróquias 2026")
 st.markdown("Monitoramento anual contínuo com consolidação de média progressiva bimestral.")
 
-# --- VALIDAÇÃO DE SEGURANÇA (Vindos do st.secrets) ---
-REQUISITOS = ["SPREADSHEET_ID", "URL_GRAVACAO", "ADMIN_PASSWORD", "API_TOKEN"]
+# --- VALIDAÇÃO DE SEGURANÇA CRÍTICA ---
+REQUISITOS = ["SPREADSHEET_ID", "URL_GRAVACAO", "ADMIN_PASSWORD_HASH", "API_SECRET_KEY"]
 FALTANTES = [req for req in REQUISITOS if req not in st.secrets]
 
 if FALTANTES:
-    st.error(f"🔒 Erro de Configuração: As credenciais de produção não foram detectadas ({', '.join(FALTANTES)}).")
+    st.error("🔒 Erro de Configuração: O ambiente não está operando em conformidade com as diretrizes de segurança.")
+    logging.critical(f"Segredos ausentes no st.secrets: {FALTANTES}")
     st.stop()
 
+# Nota: Substitua ADMIN_PASSWORD por ADMIN_PASSWORD_HASH (gerado via PBKDF2 ou SHA256 forte)
 SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
 URL_GRAVACAO = st.secrets["URL_GRAVACAO"]
-ADMIN_PASSWORD = st.secrets["ADMIN_PASSWORD"]
-API_TOKEN = st.secrets["API_TOKEN"]
+ADMIN_PASSWORD_HASH = st.secrets["ADMIN_PASSWORD_HASH"]
+API_SECRET_KEY = st.secrets["API_SECRET_KEY"].encode('utf-8')
 
-# URL de Leitura com timestamp para evitar cache do Google Sheets
-URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&v={int(time.time())}"
+# URL de Leitura - Removido o timestamp dinâmico daqui para permitir o cacheamento correto
+URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
 
 # --- LISTA OFICIAL DE PARÓQUIAS (64 itens) ---
 LISTA_PAROQUIAS = [
@@ -68,16 +80,21 @@ MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "A
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
 
 MAPA_EMOJIS = {
-    "A+": "👑 A+",
-    "A": "🟢 A",
-    "B": "🔵 B",
-    "C": "🟡 C",
-    "D": "🟠 D",
-    "E": "🔴 E",
-    "-": "⚪ -"
+    "A+": "👑 A+", "A": "🟢 A", "B": "🔵 B", "C": "🟡 C", "D": "🟠 D", "E": "🔴 E", "-": "⚪ -"
 }
 
-# --- FUNÇÕES DE TRATAMENTO ---
+# --- FUNÇÕES DE SEGURANÇA E TRATAMENTO ---
+def verificar_senha(senha_candidata):
+    """Verifica a senha usando hashing seguro para mitigar ataques de temporização."""
+    senha_hash = hashlib.sha256(senha_candidata.encode('utf-8')).hexdigest()
+    return hmac.compare_digest(senha_hash, ADMIN_PASSWORD_HASH)
+
+def gerar_token_assinatura(payload_dict):
+    """Gera um token criptográfico baseado em tempo (HMAC-SHA256) com Nonce descartável."""
+    mensagem = json.dumps(payload_dict, sort_keys=True).encode('utf-8')
+    assinatura = hmac.new(API_SECRET_KEY, mensagem, hashlib.sha256).hexdigest()
+    return assinatura
+
 def limpar_texto(txt):
     if pd.isna(txt): return ""
     txt = str(txt).strip().lower()
@@ -126,7 +143,6 @@ def calcular_ranking_justo_bimestral(row):
         idx1 = ORDEM_RANKING.index(n1_valid)
         idx2 = ORDEM_RANKING.index(n2_valid)
         
-        # Mantém a regra conservadora (menor nota do bimestre prevalece)
         nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
         pesos_bimestres.append(ORDEM_RANKING.index(nota_do_bimestre))
         
@@ -139,17 +155,27 @@ def calcular_ranking_justo_bimestral(row):
 
 @st.cache_data(ttl=60)
 def carregar_dados_da_nuvem(url):
+    """Carrega os dados de forma segura. O TTL de 60 segundos impede abusos no servidor."""
     try:
-        df = pd.read_csv(url, dtype=str)
+        # Passa cabeçalhos genéricos para não identificar comportamentos automatizados padrão
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return pd.DataFrame()
+            
+        from io import StringIO
+        df = pd.read_csv(StringIO(res.text), dtype=str)
         if df.empty: return pd.DataFrame()
+        
         orig_col = df.columns[0]
         df.rename(columns={orig_col: "Paróquia_Original"}, inplace=True)
         df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
         return df
-    except Exception:
+    except Exception as e:
+        logging.error(f"Falha ao carregar dados externos: {str(e)}")
         return pd.DataFrame()
 
-# Inicializações do Session State de segurança e controle
+# Inicializações do Session State
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
 if "limpar_voto" not in st.session_state:
@@ -163,17 +189,17 @@ col_form, col_ranking = st.columns([1.1, 1.4])
 with col_form:
     st.subheader("📝 Votação Mensal")
     
-    # Sistema Simples de Trava por Senha administrativa
     if not st.session_state["autenticado"]:
         senha_input = st.text_input("Insira a senha de administrador para votar:", type="password")
         if st.button("Liberar Painel"):
-            if senha_input == ADMIN_PASSWORD:
+            if verificar_senha(senha_input):
                 st.session_state["autenticado"] = True
                 st.success("Acesso liberado!")
                 time.sleep(0.5)
                 st.rerun()
             else:
-                st.error("Senha incorreta.")
+                st.error("Credenciais inválidas.")
+                logging.warning("Tentativa falha de login administrativo interceptada.")
     else:
         st.info("🔓 Modo Administrador Ativo")
         if st.button("Sair/Bloquear"):
@@ -186,11 +212,8 @@ with col_form:
         paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
         
         if st.session_state["limpar_voto"]:
-            st.session_state["c1"] = False
-            st.session_state["c2"] = False
-            st.session_state["c3"] = False
-            st.session_state["c4"] = False
-            st.session_state["c5"] = False
+            for key in ["c1", "c2", "c3", "c4", "c5"]:
+                st.session_state[key] = False
             st.session_state["limpar_voto"] = False
 
         c1 = st.checkbox("1° Saldo em conformidade", key="c1")
@@ -203,32 +226,42 @@ with col_form:
             nova_pontuacao = sum([c1, c2, c3, c4, c5])
             nota_mes = converter_pontos_em_nota(nova_pontuacao)
             
-            # Payload agora envia um TOKEN de autenticação que sua API externa deve validar
-            payload = {
-                "api_token": API_TOKEN, 
-                "paroquia": paroquia_selecionada, 
-                "mes": mes_selecionado,
+            # Dados estruturais base
+            dados_base = {
+                "paroquia": str(paroquia_selecionada), 
+                "mes": str(mes_selecionado),
                 "pontos": int(nova_pontuacao), 
-                "ranking": nota_mes
+                "ranking": str(nota_mes),
+                "timestamp": int(time.time()),
+                "nonce": secrets.token_hex(16)
             }
             
-            with st.spinner("Conectando com o Google Sheets de forma segura..."):
+            # Gerando a assinatura digital baseada em chave privada (HMAC)
+            assinatura = gerar_token_assinatura(dados_base)
+            
+            # Payload final contendo os dados e a assinatura gerada
+            payload = {
+                "dados": dados_base,
+                "assinatura_digital": assinatura
+            }
+            
+            with st.spinner("Enviando dados sob canal criptografado..."):
                 try:
-                    headers = {'Content-Type': 'application/json'}
-                    resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload), headers=headers, timeout=15)
+                    headers = {'Content-Type': 'application/json', 'X-Requested-With': 'Streamlit App'}
+                    resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload), headers=headers, timeout=10)
                     
-                    if resposta.status_code == 200 and ("Sucesso" in resposta.text or "sucesso" in resposta.text.lower()):
-                        st.success(f"Avaliação de {mes_selecionado} enviada com sucesso!")
+                    if resposta.status_code == 200 and "sucesso" in resposta.text.lower():
+                        st.success(f"Avaliação enviada com sucesso!")
                         st.session_state["limpar_voto"] = True
                         st.cache_data.clear()
-                        time.sleep(1.2)
+                        time.sleep(1.0)
                         st.rerun()
                     else:
-                        st.error(f"Erro de validação ou processamento da API: {resposta.text}")
-                except requests.exceptions.Timeout:
-                    st.error("Erro: Tempo limite de conexão esgotado. A planilha demorou muito para responder.")
+                        st.error("A requisição foi recusada pelo servidor remoto devido a uma falha de integridade.")
+                        logging.error(f"Erro na API Remota. Status: {resposta.status_code}. Resposta: {resposta.text}")
                 except Exception as e:
-                    st.error("Erro técnico crítico na comunicação de rede com o servidor.")
+                    st.error("Falha temporária de rede. Tente novamente mais tarde.")
+                    logging.error(f"Exceção capturada no tráfego de saída: {str(e)}")
 
 with col_ranking:
     st.subheader(f"🏆 Placar Geral Anual - {len(LISTA_PAROQUIAS)} Paróquias")
@@ -238,10 +271,6 @@ with col_ranking:
     
     if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
         df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
-        
-        nao_encontradas = df_exibicao["Paróquia_Original"].isna().sum()
-        if 0 < nao_encontradas < len(LISTA_PAROQUIAS):
-            st.caption(f"ℹ️ {nao_encontradas} paróquia(s) ainda não possuem histórico computado na planilha.")
     
     for m in MESES:
         df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes_planilha(r, m), axis=1)
