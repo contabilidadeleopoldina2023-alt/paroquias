@@ -5,17 +5,42 @@ import json
 import re
 import math
 import time
+import hashlib
+import hmac
+import secrets
+import logging
 
+# Configuração estrita de Logs internos (nunca exibir para o cliente)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
-st.title(" Ranking das Paróquias 2026 ")
+# Forçar ocultação de detalhes de erro do Streamlit (Configuração programática preventiva)
+st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>", unsafe_allow_html=True)
+
+st.title("🏆 Ranking das Paróquias 2026")
 st.markdown("Monitoramento anual contínuo com consolidação de média progressiva bimestral.")
 
-# LINKS ATUALIZADOS E CONEXÃO DIRETA
-SPREADSHEET_ID = "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80"
-URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&v={int(time.time())}"
-URL_GRAVACAO = "https://script.google.com/macros/s/AKfycbzHHD5Nd-D21trEdpeaEJhREmh4loGYCEuD2J38NCfZ9oNBeguE4fgjhEIpdchdlf9r/exec"
+# --- VALIDAÇÃO DE SEGURANÇA CRÍTICA ---
+REQUISITOS = ["SPREADSHEET_ID", "URL_GRAVACAO", "ADMIN_PASSWORD_HASH", "API_SECRET_KEY"]
+FALTANTES = [req for req in REQUISITOS if req not in st.secrets]
 
+if FALTANTES:
+    st.error("🔒 Erro de Configuração: O ambiente não está operando em conformidade com as diretrizes de segurança.")
+    logging.critical(f"Segredos ausentes no st.secrets: {FALTANTES}")
+    st.stop()
+
+# Configurações carregadas do st.secrets
+SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
+URL_GRAVACAO = st.secrets["URL_GRAVACAO"]
+ADMIN_PASSWORD_HASH = st.secrets["ADMIN_PASSWORD_HASH"]
+API_SECRET_KEY = st.secrets["API_SECRET_KEY"].encode('utf-8')
+
+# URL de Leitura - Formato estável para exportação CSV da Planilha Alvo
+URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
+
+# --- LISTA OFICIAL DE PARÓQUIAS (64 itens) ---
 LISTA_PAROQUIAS = [
     "2. Paróquia do Sr Bom Jesus - ARGIRITA", "3. Paróquia de Santo Antônio - ASTOLFO DUTRA",
     "4. Paróquia de São Franc de Paula - BOA FAMILIA", "5. Paróquia de São Sebastião - CACHOEIRA ALEGRE",
@@ -48,11 +73,29 @@ LISTA_PAROQUIAS = [
     "58. Paróquia N. S. da Consolação - ALÉM PARAÍBA", "59. Paróquia N S das Dores - DONA EUZÉBIA",
     "60. Paroqui N S Divino pranto - MURIAÉ", "61. Paróquia de Sta Bernadete - UBÁ",
     "62. P. São Crist e Imac Conceição - CATAGUASES", "63. Paróquia Santa Cruz - MURIAÉ",
-    "64. Paróquia de Santo Antônio - VISCONDE RIO BRANCO"
+    "64. Paróquia de Santo Antônio - VISCONDE RIO BRANCO", "65. Paróquia São José Operário - UBÁ"
 ]
 
 MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
+
+MAPA_EMOJIS = {
+    "A+": "👑 A+", "A": "🟢 A", "B": "🔵 B", "C": "🟡 C", "D": "🟠 D", "E": "🔴 E", "-": "⚪ -"
+}
+
+# --- FUNÇÕES DE SEGURANÇA E TRATAMENTO ---
+def verificar_senha(senha_candidata):
+    """Verifica a senha usando hashing seguro para mitigar ataques de temporização."""
+    senha_hash = hashlib.sha256(senha_candidata.encode('utf-8')).hexdigest()
+    return hmac.compare_digest(senha_hash, ADMIN_PASSWORD_HASH)
+
+def gerar_token_assinatura(payload_dict):
+    """Gera um token criptográfico baseado em tempo (HMAC-SHA256) com chaves ordenadas por padrão."""
+    # O Python por padrão no json.dumps coloca um espaço após os separadores (ex: ", "). 
+    # Isso reflete a reconstrução exata efetuada no Apps Script adaptado.
+    mensagem = json.dumps(payload_dict, sort_keys=True).encode('utf-8')
+    assinatura = hmac.new(API_SECRET_KEY, mensagem, hashlib.sha256).hexdigest()
+    return assinatura
 
 def limpar_texto(txt):
     if pd.isna(txt): return ""
@@ -68,7 +111,7 @@ def converter_pontos_em_nota(val_str):
         elif p == 3: return "B"
         elif p == 2: return "C"
         elif p == 1: return "D"
-    except:
+    except (ValueError, TypeError):
         pass
     return "E"
 
@@ -76,127 +119,185 @@ def obter_nota_mes_planilha(row, mes):
     col_rank = f"{mes}_Ranking"
     if col_rank in row.index and not pd.isna(row[col_rank]):
         val = str(row[col_rank]).strip().upper()
-        if val in ORDEM_RANKING:
-            return val
-        if val.isdigit():
-            return converter_pontos_em_nota(val)
+        if val in ORDEM_RANKING: return val
+        if val.isdigit(): return converter_pontos_em_nota(val)
 
     col_pontos = f"{mes}_Pontos"
     if col_pontos in row.index and not pd.isna(row[col_pontos]):
         val_pts = str(row[col_pontos]).strip()
         if val_pts.upper() not in ["TRUE", "FALSE", ""]:
             return converter_pontos_em_nota(val_pts)
-
+            
     return ""
 
 def calcular_ranking_justo_bimestral(row):
     pesos_bimestres = []
-
     for i in range(0, 12, 2):
-        m1 = MESES[i]
-        m2 = MESES[i+1]
-
+        m1, m2 = MESES[i], MESES[i+1]
         nota1 = obter_nota_mes_planilha(row, m1)
         nota2 = obter_nota_mes_planilha(row, m2)
-
-        if nota1 == "" and nota2 == "":
-            continue
-
+        
+        if nota1 == "" and nota2 == "": continue
+            
         n1_valid = nota1 if nota1 != "" else "E"
         n2_valid = nota2 if nota2 != "" else "E"
-
+        
         idx1 = ORDEM_RANKING.index(n1_valid)
         idx2 = ORDEM_RANKING.index(n2_valid)
-
+        
         nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
         pesos_bimestres.append(ORDEM_RANKING.index(nota_do_bimestre))
-
-    if not pesos_bimestres:
-        return "E"
-
+        
+    if not pesos_bimestres: return "E"
+        
     media_pesos = sum(pesos_bimestres) / len(pesos_bimestres)
     idx_final = math.floor(media_pesos + 0.5)
     idx_final = max(0, min(idx_final, len(ORDEM_RANKING) - 1))
-
     return ORDEM_RANKING[idx_final]
 
-def carregar_dados():
+@st.cache_data(ttl=60)
+def carregar_dados_da_nuvem(url):
+    """Carrega os dados de forma segura. O TTL de 60 segundos impede abusos no servidor."""
     try:
-        df = pd.read_csv(URL_LEITURA, dtype=str)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return pd.DataFrame()
+            
+        from io import StringIO
+        df = pd.read_csv(StringIO(res.text), dtype=str)
         if df.empty: return pd.DataFrame()
+        
         orig_col = df.columns[0]
         df.rename(columns={orig_col: "Paróquia_Original"}, inplace=True)
         df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
         return df
-    except Exception:
+    except Exception as e:
+        logging.error(f"Falha ao carregar dados externos: {str(e)}")
         return pd.DataFrame()
 
-df_atual = carregar_dados()
+# Inicializações do Session State
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+if "limpar_voto" not in st.session_state:
+    st.session_state["limpar_voto"] = False
 
+df_atual = carregar_dados_da_nuvem(URL_LEITURA)
+
+# --- LAYOUT DO APP ---
 col_form, col_ranking = st.columns([1.1, 1.4])
 
 with col_form:
-    st.subheader("📝 Votação Mensal Coletiva")
-    st.subheader("📝 Votação Mensal ")
-    mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
-    paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
+    st.subheader("📝 Votação Mensal")
+    
+    if not st.session_state["autenticado"]:
+        senha_input = st.text_input("Insira a senha de administrador para votar:", type="password")
+        if st.button("Liberar Painel"):
+            if verificar_senha(senha_input):
+                st.session_state["autenticado"] = True
+                st.success("Acesso liberado!")
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.error("Credenciais inválidas.")
+                logging.warning("Tentativa falha de login administrativo interceptada.")
+    else:
+        st.info("🔓 Modo Administrador Ativo")
+        if st.button("Sair/Bloquear"):
+            st.session_state["autenticado"] = False
+            st.rerun()
+            
+        st.divider()
+        
+        mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
+        paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
+        
+        if st.session_state["limpar_voto"]:
+            for key in ["c1", "c2", "c3", "c4", "c5"]:
+                st.session_state[key] = False
+            st.session_state["limpar_voto"] = False
 
-    c1 = st.checkbox("1° Saldo em conformidade", value=False)
-    c2 = st.checkbox("2° Anexos em dia", value=False)
-    c3 = st.checkbox("3° MPM em dia", value=False)
-    c4 = st.checkbox("4° Arquivamento físico em dia", value=False)
-    c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", value=False)
-
-    if st.button("Salvar Avaliação Mensal", use_container_width=True):
-        nova_pontuacao = sum([c1, c2, c3, c4, c5])
-        nota_mes = converter_pontos_em_nota(nova_pontuacao)
-
-        payload = {
-            "paroquia": paroquia_selecionada, 
-            "mes": mes_selecionado,
-            "pontos": int(nova_pontuacao), 
-            "ranking": nota_mes
-        }
-        with st.spinner("Conectando com o Google Sheets..."):
-            try:
-                resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload))
-                if "Sucesso" in resposta.text or "sucesso" in resposta.text.lower():
-                    st.success(f"Avaliação de {mes_selecionado} enviada com sucesso!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error(f"Erro de resposta: {resposta.text}")
-            except Exception:
-                st.error("Erro técnico na comunicação em nuvem.")
+        c1 = st.checkbox("1° Saldo em conformidade", key="c1")
+        c2 = st.checkbox("2° Anexos em dia", key="c2")
+        c3 = st.checkbox("3° MPM em dia", key="c3")
+        c4 = st.checkbox("4° Arquivamento físico em dia", key="c4")
+        c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", key="c5")
+        
+        if st.button("Salvar Avaliação Mensal", use_container_width=True):
+            nova_pontuacao = sum([c1, c2, c3, c4, c5])
+            nota_mes = converter_pontos_em_nota(nova_pontuacao)
+            
+            # Dados estruturais base
+            dados_base = {
+                "mes": str(mes_selecionado),
+                "nonce": secrets.token_hex(16),
+                "paroquia": str(paroquia_selecionada), 
+                "pontos": int(nova_pontuacao), 
+                "ranking": str(nota_mes),
+                "timestamp": int(time.time())
+            }
+            
+            # Gerando a assinatura digital baseada em chave privada (HMAC)
+            assinatura = gerar_token_assinatura(dados_base)
+            
+            # Payload final contendo os dados e a assinatura gerada
+            payload = {
+                "dados": dados_base,
+                "assinatura_digital": signature
+            }
+            
+            # Correção no nome da variável local do escopo de envio do payload
+            payload["assinatura_digital"] = assinatura
+            
+            with st.spinner("Enviando dados sob canal criptografado..."):
+                try:
+                    headers = {'Content-Type': 'application/json', 'X-Requested-With': 'Streamlit App'}
+                    resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload), headers=headers, timeout=10)
+                    
+                    # Verificação robusta: Aceita retornos de sucesso tanto em formato texto quanto estruturas JSON vazadas
+                    if resposta.status_code == 200 and ("sucesso" in resposta.text.lower() or "success" in resposta.text.lower()):
+                        st.success(f"Avaliação enviada com sucesso!")
+                        st.session_state["limpar_voto"] = True
+                        st.cache_data.clear()
+                        time.sleep(1.0)
+                        st.rerun()
+                    else:
+                        st.error("A requisição foi recusada pelo servidor remoto devido a uma falha de integridade ou validação.")
+                        logging.error(f"Erro na API Remota. Status: {resposta.status_code}. Resposta: {resposta.text}")
+                except Exception as e:
+                    st.error("Falha temporária de rede. Tente novamente mais tarde.")
+                    logging.error(f"Exceção capturada no tráfego de saída: {str(e)}")
 
 with col_ranking:
-    st.subheader(" Placar Geral Anual - 64 Paróquias")
-
+    st.subheader(f"🏆 Placar Geral Anual - {len(LISTA_PAROQUIAS)} Paróquias")
+    
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
-
+    
     if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
         df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
-
+    
     for m in MESES:
         df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes_planilha(r, m), axis=1)
-
+        
     df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
-
+    
     df_visual = df_exibicao.copy()
-    for m in MESES:
-        df_visual[m] = df_visual[m].apply(lambda x: x if x != "" else "-")
-
     df_visual["_ordem"] = df_visual["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
+    
+    df_visual["Ranking_Calculado"] = df_visual["Ranking_Calculado"].map(MAPA_EMOJIS).fillna(MAPA_EMOJIS["E"])
+    for m in MESES:
+        df_visual[m] = df_visual[m].apply(lambda x: MAPA_EMOJIS[x] if x in MAPA_EMOJIS and x != "" else MAPA_EMOJIS["-"])
+    
     df_ordenado = df_visual.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
-
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
-
+    
     st.dataframe(
         df_ordenado[colunas_visiveis],
         hide_index=True,
         use_container_width=True,
         column_config={
-            "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆")
+            "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="large"),
+            "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small")
         }
     )
