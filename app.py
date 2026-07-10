@@ -85,10 +85,12 @@ MAPA_EMOJIS = {
 
 # --- FUNÇÕES DE SEGURANÇA E TRATAMENTO ---
 def verificar_senha(senha_candidata):
-    """Verifica a senha usando hashing seguro para mitigar ataques de temporização."""
-    senha_hash = hashlib.sha256(senha_candidata.encode('utf-8')).hexdigest()
-    return hmac.compare_digest(senha_hash, ADMIN_PASSWORD_HASH)
-
+    """Verifica a senha aplicando tratamento de strings para evitar falhas de digitação."""
+    senha_limpa = str(senha_candidata).strip()
+    senha_hash = hashlib.sha256(senha_limpa.encode('utf-8')).hexdigest()
+    hash_esperado = str(ADMIN_PASSWORD_HASH).strip()
+    
+    return hmac.compare_digest(senha_hash, hash_esperado)
 def gerar_token_assinatura(payload_dict):
     """Gera um token criptográfico baseado em tempo (HMAC-SHA256) com chaves ordenadas por padrão."""
     # O Python por padrão no json.dumps coloca um espaço após os separadores (ex: ", "). 
