@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import secrets
 import logging
+from io import StringIO
 
 # Configuração estrita de Logs internos (nunca exibir para o cliente)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -98,7 +99,7 @@ def verificar_senha(senha_candidata):
 def gerar_token_assinatura(payload_dict):
     """Gera um token criptográfico baseado em tempo (HMAC-SHA256) com Nonce descartável."""
     mensagem = json.dumps(payload_dict, sort_keys=True).encode('utf-8')
-    assinatura = hmac.new(API_SECRET_KEY, message=mensagem, digestmod=hashlib.sha256).hexdigest()
+    assinatura = hmac.new(API_SECRET_KEY, msg=mensagem, digestmod=hashlib.sha256).hexdigest()
     return assinatura
 
 def limpar_texto(txt):
@@ -176,7 +177,6 @@ def carregar_dados_da_nuvem(url):
         if res.status_code != 200:
             return pd.DataFrame()
             
-        from io import StringIO
         df = pd.read_csv(StringIO(res.text), dtype=str)
         if df.empty: return pd.DataFrame()
         
@@ -239,7 +239,8 @@ with col_form:
         c4 = st.checkbox("4° Arquivamento físico em dia", key="c4")
         c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", key="c5")
         
-        if st.button("Salvar Avaliação Mensal", width="stretch"):
+        # AJUSTE: Modificado width="stretch" para use_container_width=True
+        if st.button("Salvar Avaliação Mensal", use_container_width=True):
             nova_pontuacao = sum([c1, c2, c3, c4, c5])
             nota_mes = converter_pontos_em_nota(nova_pontuacao)
             
@@ -320,7 +321,7 @@ with col_ranking:
     st.dataframe(
         df_ordenado[colunas_visiveis],
         hide_index=True,
-        width="stretch",
+        use_container_width=True, # AJUSTE: Modificado de width="stretch"
         column_config={
             "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="large"),
             "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small")
