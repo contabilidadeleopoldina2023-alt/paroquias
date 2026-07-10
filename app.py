@@ -86,15 +86,17 @@ MAPA_EMOJIS = {
 
 # --- FUNÇÕES DE SEGURANÇA E TRATAMENTO ---
 def verificar_senha(senha_candidata):
-    """Verifica a senha tratando erros comuns de tipo int/str no Streamlit."""
+    """Verifica a senha comparando hashes de forma direta."""
+    if not senha_candidata:
+        return False
     senha_limpa = str(senha_candidata).strip()
     senha_hash = hashlib.sha256(senha_limpa.encode('utf-8')).hexdigest()
-    return hmac.compare_digest(senha_hash, ADMIN_PASSWORD_HASH)
+    return senha_hash == ADMIN_PASSWORD_HASH
 
 def gerar_token_assinatura(payload_dict):
     """Gera um token criptográfico baseado em tempo (HMAC-SHA256) com Nonce descartável."""
     mensagem = json.dumps(payload_dict, sort_keys=True).encode('utf-8')
-    assinatura = hmac.new(API_SECRET_KEY, mensagem, hashlib.sha256).hexdigest()
+    assinatura = hmac.new(API_SECRET_KEY, message=mensagem, digestmod=hashlib.sha256).hexdigest()
     return assinatura
 
 def limpar_texto(txt):
@@ -222,7 +224,7 @@ with col_form:
         c4 = st.checkbox("4° Arquivamento físico em dia", key="c4")
         c5 = st.checkbox("5° Tudo pronto até o quinto dia útil", key="c5")
         
-        if st.button("Salvar Avaliação Mensal", use_container_width=True):
+        if st.button("Salvar Avaliação Mensal", width="stretch"):
             nova_pontuacao = sum([c1, c2, c3, c4, c5])
             nota_mes = converter_pontos_em_nota(nova_pontuacao)
             
@@ -290,7 +292,7 @@ with col_ranking:
     st.dataframe(
         df_ordenado[colunas_visiveis],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="large"),
             "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small")
