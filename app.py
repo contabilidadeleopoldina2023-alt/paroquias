@@ -90,6 +90,8 @@ def verificar_senha(senha_candidata):
     if not senha_candidata:
         return False
     senha_limpa = str(senha_candidata).strip()
+    if not senha_limpa:  # Rejeita strings vazias após strip
+        return False
     senha_hash = hashlib.sha256(senha_limpa.encode('utf-8')).hexdigest()
     return senha_hash == ADMIN_PASSWORD_HASH
 
@@ -169,6 +171,10 @@ def carregar_dados_da_nuvem(url):
         df = pd.read_csv(StringIO(res.text), dtype=str)
         if df.empty: return pd.DataFrame()
         
+        if len(df.columns) == 0:  # BUG FIX: Valida colunas antes de acessar
+            logging.warning("CSV sem colunas retornado da nuvem")
+            return pd.DataFrame()
+        
         orig_col = df.columns[0]
         df.rename(columns={orig_col: "Paróquia_Original"}, inplace=True)
         df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
@@ -186,7 +192,7 @@ if "limpar_voto" not in st.session_state:
 df_atual = carregar_dados_da_nuvem(URL_LEITURA)
 
 # --- LAYOUT DO APP ---
-col_form, col_ranking = st.columns([1.1, 1.4])
+col_form, col_ranking = st.columns([1, 1.4])  # BUG FIX: Proporções melhoradas
 
 with col_form:
     st.subheader("📝 Votação Mensal")
@@ -271,20 +277,23 @@ with col_ranking:
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
     
+    # BUG FIX: Merge com sufixos para evitar conflito de nomes de colunas
     if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
-        df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
+        df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left", suffixes=("_local", "_remoto"))
     
     for m in MESES:
         df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes_planilha(r, m), axis=1)
         
     df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
     
+    # BUG FIX: Calcula ordem ANTES de copiar, para evitar inconsistência
+    df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else len(ORDEM_RANKING) - 1)
+    
     df_visual = df_exibicao.copy()
-    df_visual["_ordem"] = df_visual["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
     
     df_visual["Ranking_Calculado"] = df_visual["Ranking_Calculado"].map(MAPA_EMOJIS).fillna(MAPA_EMOJIS["E"])
     for m in MESES:
-        df_visual[m] = df_visual[m].apply(lambda x: MAPA_EMOJIS[x] if x in MAPA_EMOJIS and x != "" else MAPA_EMOJIS["-"])
+        df_visual[m] = df_visual[m].apply(lambda x: MAPA_EMOJIS.get(x, MAPA_EMOJIS["-"]) if x else MAPA_EMOJIS["-"])
     
     df_ordenado = df_visual.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
