@@ -12,11 +12,15 @@ st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 st.title(" Ranking das Paróquias 2026 ")
 st.markdown("Monitoramento anual contínuo com consolidação de média progressiva bimestral.")
 
-# --- SEGURANÇA E CONEXÕES ---
-# Boa prática: Usar st.secrets em produção. Caso não configurado, usa o padrão em texto.
-SPREADSHEET_ID = st.secrets.get("SPREADSHEET_ID", "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80")
+# --- SEGURANÇA E CONEXÕES (URLs Escondidas em st.secrets) ---
+# Caso as chaves não existam no st.secrets, o app exibirá um aviso de segurança amigável e interromperá a execução.
+if "SPREADSHEET_ID" not in st.secrets or "URL_GRAVACAO" not in st.secrets:
+    st.error("🔒 Erro de Configuração: As credenciais de produção não foram detectadas no ambiente.")
+    st.stop()
+
+SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
+URL_GRAVACAO = st.secrets["URL_GRAVACAO"]
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&v={int(time.time())}"
-URL_GRAVACAO = st.secrets.get("URL_GRAVACAO", "https://script.google.com/macros/s/AKfycbzHHD5Nd-D21trEdpeaEJhREmh4loGYCEuD2J38NCfZ9oNBeguE4fgjhEIpdchdlf9r/exec")
 
 # --- LISTA OFICIAL DE PARÓQUIAS (64 itens) ---
 LISTA_PAROQUIAS = [
@@ -57,7 +61,6 @@ LISTA_PAROQUIAS = [
 MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 ORDEM_RANKING = ["E", "D", "C", "B", "A", "A+"]
 
-# Dicionário visual para formatação amigável das notas na tabela
 MAPA_EMOJIS = {
     "A+": "👑 A+",
     "A": "🟢 A",
@@ -127,7 +130,6 @@ def calcular_ranking_justo_bimestral(row):
     idx_final = max(0, min(idx_final, len(ORDEM_RANKING) - 1))
     return ORDEM_RANKING[idx_final]
 
-# OTIMIZAÇÃO: Cache de dados por 60 segundos para evitar travamentos
 @st.cache_data(ttl=60)
 def carregar_dados_da_nuvem(url):
     try:
@@ -140,7 +142,6 @@ def carregar_dados_da_nuvem(url):
     except Exception:
         return pd.DataFrame()
 
-# Inicialização de variáveis de estado dos checkboxes do formulário
 if "limpar_voto" not in st.session_state:
     st.session_state["limpar_voto"] = False
 
@@ -154,7 +155,6 @@ with col_form:
     mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
     paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
     
-    # Se o gatilho de limpeza foi ativado, redefine os valores padrões para False
     if st.session_state["limpar_voto"]:
         st.session_state["c1"] = False
         st.session_state["c2"] = False
@@ -185,7 +185,6 @@ with col_form:
                 resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload), timeout=10)
                 if "Sucesso" in resposta.text or "sucesso" in resposta.text.lower():
                     st.success(f"Avaliação de {mes_selecionado} enviada com sucesso!")
-                    # Ativa o reset dos campos e limpa o cache para a próxima leitura trazer o dado novo
                     st.session_state["limpar_voto"] = True
                     st.cache_data.clear()
                     time.sleep(1.2)
@@ -201,31 +200,25 @@ with col_ranking:
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
     
-    # Validador de consistência (verifica se os dados cruzam perfeitamente com a nuvem)
     if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
         df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
         
-        # Alerta opcional de Debugger de consistência interna das chaves (se necessário monitorar)
         nao_encontradas = df_exibicao["Paróquia_Original"].isna().sum()
         if nao_encontradas > 0 and nao_encontradas < len(LISTA_PAROQUIAS):
             st.caption(f"ℹ️ {nao_encontradas} paróquia(s) ainda não possuem histórico computado na planilha.")
     
-    # Processa as colunas de dados
     for m in MESES:
         df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes_planilha(r, m), axis=1)
         
     df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
     
-    # Criação do DataFrame Visual com mapeamento estético de Emojis
     df_visual = df_exibicao.copy()
     df_visual["_ordem"] = df_visual["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
     
-    # Aplica o mapa visual amigável nas colunas
     df_visual["Ranking_Calculado"] = df_visual["Ranking_Calculado"].map(MAPA_EMOJIS).fillna(MAPA_EMOJIS["E"])
     for m in MESES:
         df_visual[m] = df_visual[m].apply(lambda x: MAPA_EMOJIS[x] if x in MAPA_EMOJIS and x != "" else MAPA_EMOJIS["-"])
     
-    # Ordenação Inteligente: Maior rank primeiro, ordem alfabética em caso de empate
     df_ordenado = df_visual.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
     
