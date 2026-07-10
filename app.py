@@ -98,7 +98,9 @@ def verificar_senha(senha_candidata):
 
 def gerar_token_assinatura(payload_dict):
     """Gera um token criptográfico baseado em tempo (HMAC-SHA256) com Nonce descartável."""
-    mensagem = json.dumps(payload_dict, sort_keys=True).encode('utf-8')
+    # O separators=(',', ':') remove espaços em branco extras do JSON
+    # O ensure_ascii=False garante que acentos como 'Março' e 'Paróquia' não virem \u00e7 ou \u00f3
+    mensagem = json.dumps(payload_dict, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     assinatura = hmac.new(API_SECRET_KEY, msg=mensagem, digestmod=hashlib.sha256).hexdigest()
     return assinatura
 
