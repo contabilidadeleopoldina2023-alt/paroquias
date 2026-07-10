@@ -120,44 +120,53 @@ def converter_pontos_em_nota(val_str):
     return "E"
 
 def obter_nota_mes_planilha(row, mes):
-    col_rank = f"{mes}_Ranking"
-    if col_rank in row.index and not pd.isna(row[col_rank]):
-        val = str(row[col_rank]).strip().upper()
-        if val in ORDEM_RANKING: return val
-        if val.isdigit(): return converter_pontos_em_nota(val)
+    """Extrai nota do mês com proteção contra acessos inválidos."""
+    try:
+        col_rank = f"{mes}_Ranking"
+        if col_rank in row.index and not pd.isna(row[col_rank]):
+            val = str(row[col_rank]).strip().upper()
+            if val in ORDEM_RANKING: return val
+            if val.isdigit(): return converter_pontos_em_nota(val)
 
-    col_pontos = f"{mes}_Pontos"
-    if col_pontos in row.index and not pd.isna(row[col_pontos]):
-        val_pts = str(row[col_pontos]).strip()
-        if val_pts.upper() not in ["TRUE", "FALSE", ""]:
-            return converter_pontos_em_nota(val_pts)
-            
+        col_pontos = f"{mes}_Pontos"
+        if col_pontos in row.index and not pd.isna(row[col_pontos]):
+            val_pts = str(row[col_pontos]).strip()
+            if val_pts.upper() not in ["TRUE", "FALSE", ""]:
+                return converter_pontos_em_nota(val_pts)
+    except (KeyError, TypeError) as e:
+        logging.debug(f"Erro ao extrair nota para mês {mes}: {str(e)}")
+        
     return ""
 
 def calcular_ranking_justo_bimestral(row):
-    pesos_bimestres = []
-    for i in range(0, 12, 2):
-        m1, m2 = MESES[i], MESES[i+1]
-        nota1 = obter_nota_mes_planilha(row, m1)
-        nota2 = obter_nota_mes_planilha(row, m2)
-        
-        if nota1 == "" and nota2 == "": continue
+    """Calcula ranking bimestral com proteção contra erros."""
+    try:
+        pesos_bimestres = []
+        for i in range(0, 12, 2):
+            m1, m2 = MESES[i], MESES[i+1]
+            nota1 = obter_nota_mes_planilha(row, m1)
+            nota2 = obter_nota_mes_planilha(row, m2)
             
-        n1_valid = nota1 if nota1 != "" else "E"
-        n2_valid = nota2 if nota2 != "" else "E"
-        
-        idx1 = ORDEM_RANKING.index(n1_valid)
-        idx2 = ORDEM_RANKING.index(n2_valid)
-        
-        nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
-        pesos_bimestres.append(ORDEM_RANKING.index(nota_do_bimestre))
-        
-    if not pesos_bimestres: return "E"
-        
-    media_pesos = sum(pesos_bimestres) / len(pesos_bimestres)
-    idx_final = math.floor(media_pesos + 0.5)
-    idx_final = max(0, min(idx_final, len(ORDEM_RANKING) - 1))
-    return ORDEM_RANKING[idx_final]
+            if nota1 == "" and nota2 == "": continue
+                
+            n1_valid = nota1 if nota1 != "" else "E"
+            n2_valid = nota2 if nota2 != "" else "E"
+            
+            idx1 = ORDEM_RANKING.index(n1_valid)
+            idx2 = ORDEM_RANKING.index(n2_valid)
+            
+            nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
+            pesos_bimestres.append(ORDEM_RANKING.index(nota_do_bimestre))
+            
+        if not pesos_bimestres: return "E"
+            
+        media_pesos = sum(pesos_bimestres) / len(pesos_bimestres)
+        idx_final = math.floor(media_pesos + 0.5)
+        idx_final = max(0, min(idx_final, len(ORDEM_RANKING) - 1))
+        return ORDEM_RANKING[idx_final]
+    except Exception as e:
+        logging.debug(f"Erro ao calcular ranking bimestral: {str(e)}")
+        return "E"
 
 @st.cache_data(ttl=60)
 def carregar_dados_da_nuvem(url):
@@ -281,10 +290,20 @@ with col_ranking:
     if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
         df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left", suffixes=("_local", "_remoto"))
     
-    for m in MESES:
-        df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes_planilha(r, m), axis=1)
-        
-    df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
+    # BUG FIX: Adiciona proteção contra ValueError em df.apply() com dataframes malformadas
+    try:
+        for m in MESES:
+            df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes_planilha(r, m), axis=1)
+            
+        df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
+    except Exception as e:
+        logging.error(f"Erro ao processar rankings: {str(e)}")
+        # Fallback: preenche com valores padrão
+        for m in MESES:
+            if m not in df_exibicao.columns:
+                df_exibicao[m] = "E"
+        if "Ranking_Calculado" not in df_exibicao.columns:
+            df_exibicao["Ranking_Calculado"] = "E"
     
     # BUG FIX: Calcula ordem ANTES de copiar, para evitar inconsistência
     df_exibicao["_ordem"] = df_exibicao["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else len(ORDEM_RANKING) - 1)
