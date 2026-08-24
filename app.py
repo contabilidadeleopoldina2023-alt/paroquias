@@ -11,33 +11,27 @@ import secrets
 import logging
 from io import StringIO
 
-# Configuração estrita de Logs internos
+# Configuração de Logs internos
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
-
 st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>", unsafe_allow_html=True)
 
 st.title("🏆 Ranking das Paróquias 2026")
 st.markdown("Monitoramento anual contínuo com consolidação de média progressiva bimestral.")
 
-# --- VALIDAÇÃO DE SEGURANÇA ---
-REQUISITOS = ["SPREADSHEET_ID", "URL_GRAVACAO", "ADMIN_PASSWORD_HASH", "API_SECRET_KEY"]
-FALTANTES = [req for req in REQUISITOS if req not in st.secrets]
+# --- SEGREDOS E CONFIGURAÇÕES DA APLICAÇÃO ---
+# Carregamento via st.secrets com fallback automático para as credenciais padrão
+SPREADSHEET_ID = st.secrets.get("SPREADSHEET_ID", "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80")
+URL_GRAVACAO = st.secrets.get("URL_GRAVACAO", "https://script.google.com/macros/s/AKfycbzHHD5Nd-D21trEdpeaEJhREmh4loGYCEuD2J38NCfZ9oNBeguE4fgjhEIpdchdlf9r/exec")
+ADMIN_PASSWORD_HASH = st.secrets.get("ADMIN_PASSWORD_HASH", "2264c18c94622723c31677c7f466b03657b98f244ffdf4a837077e68fa7075fb")
+API_SECRET_KEY_RAW = st.secrets.get("API_SECRET_KEY", "28031942")
 
-if FALTANTES:
-    st.error("🔒 Erro de Configuração: O ambiente não está operando em conformidade com as diretrizes de segurança.")
-    logging.critical(f"Segredos ausentes no st.secrets: {FALTANTES}")
-    st.stop()
-
-SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
-URL_GRAVACAO = st.secrets["URL_GRAVACAO"]
-ADMIN_PASSWORD_HASH = st.secrets["ADMIN_PASSWORD_HASH"]
-API_SECRET_KEY = st.secrets["API_SECRET_KEY"].encode('utf-8')
-
+API_SECRET_KEY = str(API_SECRET_KEY_RAW).encode('utf-8')
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
 
+# --- LISTA OFICIAL DE PARÓQUIAS (64 itens) ---
 LISTA_PAROQUIAS = [
     "2. Paróquia do Sr Bom Jesus - ARGIRITA", "3. Paróquia de Santo Antônio - ASTOLFO DUTRA",
     "4. Paróquia de São Franc de Paula - BOA FAMILIA", "5. Paróquia de São Sebastião - CACHOEIRA ALEGRE",
@@ -99,7 +93,6 @@ def limpar_texto(txt):
     return txt
 
 def converter_pontos_em_nota(val_str):
-    """Mapeia pontuações de 0 a 5 para as respectivas notas de E a A+."""
     try:
         p = int(float(str(val_str).strip()))
         if p >= 5: return "A+"
@@ -133,11 +126,9 @@ def calcular_ranking_justo_bimestral(row):
         nota1 = obter_nota_mes_planilha(row, m1)
         nota2 = obter_nota_mes_planilha(row, m2)
         
-        # Se nenhum mês do bimestre foi avaliado, pula o bimestre
         if nota1 == "" and nota2 == "":
             continue
-        
-        # Se apenas 1 mês foi avaliado, considera a nota desse único mês
+            
         if nota1 != "" and nota2 == "":
             nota_do_bimestre = nota1
         elif nota1 == "" and nota2 != "":
@@ -171,14 +162,13 @@ def carregar_dados_da_nuvem(url):
         df.rename(columns={orig_col: "Paróquia_Original"}, inplace=True)
         df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
         
-        # Remove duplicatas para evitar multiplicações de linhas no merge
         df = df.drop_duplicates(subset=["Chave_Limpa"], keep="last")
         return df
     except Exception as e:
         logging.error(f"Falha ao carregar dados externos: {str(e)}")
         return pd.DataFrame()
 
-# Inicialização de Session State
+# Inicializações do Session State
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
 if "limpar_voto" not in st.session_state:
