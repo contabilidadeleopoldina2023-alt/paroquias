@@ -28,7 +28,7 @@ ADMIN_PASSWORD_HASH = str(st.secrets.get("ADMIN_PASSWORD_HASH", "2264c18c9462272
 API_SECRET_KEY_RAW = str(st.secrets.get("API_SECRET_KEY", "28031942")).strip()
 
 API_SECRET_KEY = API_SECRET_KEY_RAW.encode('utf-8')
-URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
+URL_LEITURA_BASE = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
 
 # --- LISTA OFICIAL DE PARÓQUIAS ---
 LISTA_PAROQUIAS = [
@@ -77,12 +77,10 @@ MAPA_EMOJIS = {
 def verificar_senha(senha_candidata):
     senha_limpa = str(senha_candidata).strip()
     
-    # 1. Validação via hash SHA-256
     senha_hash = hashlib.sha256(senha_limpa.encode('utf-8')).hexdigest().lower()
     if hmac.compare_digest(senha_hash, ADMIN_PASSWORD_HASH):
         return True
         
-    # 2. Validação direta contra a chave secreta em texto plano
     if hmac.compare_digest(senha_limpa, API_SECRET_KEY_RAW):
         return True
         
@@ -154,11 +152,18 @@ def calcular_ranking_justo_bimestral(row):
     idx_final = max(0, min(idx_final, len(ORDEM_RANKING) - 1))
     return ORDEM_RANKING[idx_final]
 
-@st.cache_data(ttl=60)
-def carregar_dados_da_nuvem(url):
+# TTL reduzido para 5 segundos + bypass de cache via parâmetro _ts
+@st.cache_data(ttl=5)
+def carregar_dados_da_nuvem(url_base):
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        res = requests.get(url, headers=headers, timeout=10)
+        # Previne cache do Google adicionando timestamp único
+        url_com_timestamp = f"{url_base}&_ts={int(time.time())}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
+        }
+        res = requests.get(url_com_timestamp, headers=headers, timeout=10)
         if res.status_code != 200:
             return pd.DataFrame()
             
@@ -181,7 +186,7 @@ if "autenticado" not in st.session_state:
 if "limpar_voto" not in st.session_state:
     st.session_state["limpar_voto"] = False
 
-df_atual = carregar_dados_da_nuvem(URL_LEITURA)
+df_atual = carregar_dados_da_nuvem(URL_LEITURA_BASE)
 
 # --- LAYOUT DO APP ---
 col_form, col_ranking = st.columns([1.1, 1.4])
@@ -245,9 +250,8 @@ with col_form:
                 "assinatura_digital": assinatura
             }
             
-            with st.spinner("Enviando dados para o Google Sheets..."):
+            with st.spinner("Enviando dados para a planilha..."):
                 try:
-                    # Envio ajustado para aceitar redirecionamento do Google e evitar CORS
                     resposta = requests.post(
                         URL_GRAVACAO, 
                         data=json.dumps(payload),
@@ -257,10 +261,13 @@ with col_form:
                     )
                     
                     if resposta.status_code in [200, 302]:
-                        st.success("Avaliação enviada com sucesso!")
-                        st.session_state["limpar_voto"] = True
+                        # Força a destruição de qualquer dado em cache no Streamlit
                         st.cache_data.clear()
-                        time.sleep(1.0)
+                        st.session_state["limpar_voto"] = True
+                        st.success("Avaliação enviada com sucesso! Atualizando placar...")
+                        
+                        # Pequena pausa para garantir a gravação na nuvem
+                        time.sleep(1.5)
                         st.rerun()
                     else:
                         st.error(f"Erro na gravação. Código de status: {resposta.status_code}")
@@ -271,6 +278,10 @@ with col_form:
 
 with col_ranking:
     st.subheader(f"🏆 Placar Geral Anual - {len(LISTA_PAROQUIAS)} Paróquias")
+    
+    if st.button("🔄 Recarregar Placar Manualmente"):
+        st.cache_data.clear()
+        st.rerun()
     
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
