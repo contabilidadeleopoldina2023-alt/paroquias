@@ -73,7 +73,7 @@ MAPA_EMOJIS = {
     "A+": "👑 A+", "A": "🟢 A", "B": "🔵 B", "C": "🟡 C", "D": "🟠 D", "E": "🔴 E", "-": "⚪ -"
 }
 
-# --- FUNÇÃO DE VALIDAÇÃO DE SENHA CORRIGIDA ---
+# --- FUNÇÕES DE SEGURANÇA E TRATAMENTO ---
 def verificar_senha(senha_candidata):
     senha_limpa = str(senha_candidata).strip()
     
@@ -82,7 +82,7 @@ def verificar_senha(senha_candidata):
     if hmac.compare_digest(senha_hash, ADMIN_PASSWORD_HASH):
         return True
         
-    # 2. Validação direta contra a chave secreta plana (se fornecida plana no input)
+    # 2. Validação direta contra a chave secreta em texto plano
     if hmac.compare_digest(senha_limpa, API_SECRET_KEY_RAW):
         return True
         
@@ -245,23 +245,29 @@ with col_form:
                 "assinatura_digital": assinatura
             }
             
-            with st.spinner("Enviando dados sob canal criptografado..."):
+            with st.spinner("Enviando dados para o Google Sheets..."):
                 try:
-                    headers = {'Content-Type': 'application/json', 'X-Requested-With': 'Streamlit App'}
-                    resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload), headers=headers, timeout=10)
+                    # Envio ajustado para aceitar redirecionamento do Google e evitar CORS
+                    resposta = requests.post(
+                        URL_GRAVACAO, 
+                        data=json.dumps(payload),
+                        headers={'Content-Type': 'text/plain;charset=utf-8'},
+                        allow_redirects=True, 
+                        timeout=15
+                    )
                     
-                    if resposta.status_code == 200 and ("sucesso" in resposta.text.lower() or "success" in resposta.text.lower()):
+                    if resposta.status_code in [200, 302]:
                         st.success("Avaliação enviada com sucesso!")
                         st.session_state["limpar_voto"] = True
                         st.cache_data.clear()
                         time.sleep(1.0)
                         st.rerun()
                     else:
-                        st.error("A requisição foi recusada pelo servidor remoto devido a uma falha de integridade ou validação.")
-                        logging.error(f"Erro na API Remota. Status: {resposta.status_code}. Resposta: {resposta.text}")
+                        st.error(f"Erro na gravação. Código de status: {resposta.status_code}")
+                        logging.error(f"Erro na API. Status: {resposta.status_code}. Resposta: {resposta.text}")
                 except Exception as e:
-                    st.error("Falha temporária de rede. Tente novamente mais tarde.")
-                    logging.error(f"Exceção capturada no tráfego de saída: {str(e)}")
+                    st.error("Falha temporária de rede. Tente novamente em alguns instantes.")
+                    logging.error(f"Exceção capturada no envio: {str(e)}")
 
 with col_ranking:
     st.subheader(f"🏆 Placar Geral Anual - {len(LISTA_PAROQUIAS)} Paróquias")
