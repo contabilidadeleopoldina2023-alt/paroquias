@@ -9,20 +9,20 @@ import hashlib
 import hmac
 import secrets
 import logging
+from io import StringIO
 
-# Configuração estrita de Logs internos (nunca exibir para o cliente)
+# Configuração estrita de Logs internos
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Ranking Diocesano 2026", layout="wide")
 
-# Forçar ocultação de detalhes de erro do Streamlit (Configuração programática preventiva)
 st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>", unsafe_allow_html=True)
 
 st.title("🏆 Ranking das Paróquias 2026")
 st.markdown("Monitoramento anual contínuo com consolidação de média progressiva bimestral.")
 
-# --- VALIDAÇÃO DE SEGURANÇA CRÍTICA ---
+# --- VALIDAÇÃO DE SEGURANÇA ---
 REQUISITOS = ["SPREADSHEET_ID", "URL_GRAVACAO", "ADMIN_PASSWORD_HASH", "API_SECRET_KEY"]
 FALTANTES = [req for req in REQUISITOS if req not in st.secrets]
 
@@ -31,16 +31,13 @@ if FALTANTES:
     logging.critical(f"Segredos ausentes no st.secrets: {FALTANTES}")
     st.stop()
 
-# Configurações carregadas do st.secrets
 SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
 URL_GRAVACAO = st.secrets["URL_GRAVACAO"]
 ADMIN_PASSWORD_HASH = st.secrets["ADMIN_PASSWORD_HASH"]
 API_SECRET_KEY = st.secrets["API_SECRET_KEY"].encode('utf-8')
 
-# URL de Leitura - Formato estável para exportação CSV da Planilha Alvo
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
 
-# --- LISTA OFICIAL DE PARÓQUIAS (64 itens) ---
 LISTA_PAROQUIAS = [
     "2. Paróquia do Sr Bom Jesus - ARGIRITA", "3. Paróquia de Santo Antônio - ASTOLFO DUTRA",
     "4. Paróquia de São Franc de Paula - BOA FAMILIA", "5. Paróquia de São Sebastião - CACHOEIRA ALEGRE",
@@ -85,19 +82,14 @@ MAPA_EMOJIS = {
 
 # --- FUNÇÕES DE SEGURANÇA E TRATAMENTO ---
 def verificar_senha(senha_candidata):
-    """Verifica a senha aplicando tratamento de strings para evitar falhas de digitação."""
     senha_limpa = str(senha_candidata).strip()
     senha_hash = hashlib.sha256(senha_limpa.encode('utf-8')).hexdigest()
     hash_esperado = str(ADMIN_PASSWORD_HASH).strip()
-    
     return hmac.compare_digest(senha_hash, hash_esperado)
+
 def gerar_token_assinatura(payload_dict):
-    """Gera um token criptográfico baseado em tempo (HMAC-SHA256) com chaves ordenadas por padrão."""
-    # O Python por padrão no json.dumps coloca um espaço após os separadores (ex: ", "). 
-    # Isso reflete a reconstrução exata efetuada no Apps Script adaptado.
     mensagem = json.dumps(payload_dict, sort_keys=True).encode('utf-8')
-    assinatura = hmac.new(API_SECRET_KEY, mensagem, hashlib.sha256).hexdigest()
-    return assinatura
+    return hmac.new(API_SECRET_KEY, mensagem, hashlib.sha256).hexdigest()
 
 def limpar_texto(txt):
     if pd.isna(txt): return ""
@@ -107,9 +99,11 @@ def limpar_texto(txt):
     return txt
 
 def converter_pontos_em_nota(val_str):
+    """Mapeia pontuações de 0 a 5 para as respectivas notas de E a A+."""
     try:
         p = int(float(str(val_str).strip()))
-        if p >= 4: return "A"
+        if p >= 5: return "A+"
+        elif p == 4: return "A"
         elif p == 3: return "B"
         elif p == 2: return "C"
         elif p == 1: return "D"
@@ -139,15 +133,20 @@ def calcular_ranking_justo_bimestral(row):
         nota1 = obter_nota_mes_planilha(row, m1)
         nota2 = obter_nota_mes_planilha(row, m2)
         
-        if nota1 == "" and nota2 == "": continue
-            
-        n1_valid = nota1 if nota1 != "" else "E"
-        n2_valid = nota2 if nota2 != "" else "E"
+        # Se nenhum mês do bimestre foi avaliado, pula o bimestre
+        if nota1 == "" and nota2 == "":
+            continue
         
-        idx1 = ORDEM_RANKING.index(n1_valid)
-        idx2 = ORDEM_RANKING.index(n2_valid)
-        
-        nota_do_bimestre = n1_valid if idx1 <= idx2 else n2_valid
+        # Se apenas 1 mês foi avaliado, considera a nota desse único mês
+        if nota1 != "" and nota2 == "":
+            nota_do_bimestre = nota1
+        elif nota1 == "" and nota2 != "":
+            nota_do_bimestre = nota2
+        else:
+            idx1 = ORDEM_RANKING.index(nota1)
+            idx2 = ORDEM_RANKING.index(nota2)
+            nota_do_bimestre = nota1 if idx1 <= idx2 else nota2
+
         pesos_bimestres.append(ORDEM_RANKING.index(nota_do_bimestre))
         
     if not pesos_bimestres: return "E"
@@ -159,26 +158,27 @@ def calcular_ranking_justo_bimestral(row):
 
 @st.cache_data(ttl=60)
 def carregar_dados_da_nuvem(url):
-    """Carrega os dados de forma segura. O TTL de 60 segundos impede abusos no servidor."""
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code != 200:
             return pd.DataFrame()
             
-        from io import StringIO
         df = pd.read_csv(StringIO(res.text), dtype=str)
         if df.empty: return pd.DataFrame()
         
         orig_col = df.columns[0]
         df.rename(columns={orig_col: "Paróquia_Original"}, inplace=True)
         df["Chave_Limpa"] = df["Paróquia_Original"].apply(limpar_texto)
+        
+        # Remove duplicatas para evitar multiplicações de linhas no merge
+        df = df.drop_duplicates(subset=["Chave_Limpa"], keep="last")
         return df
     except Exception as e:
         logging.error(f"Falha ao carregar dados externos: {str(e)}")
         return pd.DataFrame()
 
-# Inicializações do Session State
+# Inicialização de Session State
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
 if "limpar_voto" not in st.session_state:
@@ -193,7 +193,6 @@ with col_form:
     st.subheader("📝 Votação Mensal")
     
     if not st.session_state["autenticado"]:
-        # Formulário dedicado para evitar perda de dados no clique do botão
         with st.form("form_login"):
             senha_input = st.text_input("Insira a senha de administrador para votar:", type="password")
             botao_liberar = st.form_submit_button("Liberar Painel", use_container_width=True)
@@ -233,7 +232,6 @@ with col_form:
             nova_pontuacao = sum([c1, c2, c3, c4, c5])
             nota_mes = converter_pontos_em_nota(nova_pontuacao)
             
-            # Dados estruturais base
             dados_base = {
                 "mes": str(mes_selecionado),
                 "nonce": secrets.token_hex(16),
@@ -243,26 +241,20 @@ with col_form:
                 "timestamp": int(time.time())
             }
             
-            # Gerando a assinatura digital baseada em chave privada (HMAC)
             assinatura = gerar_token_assinatura(dados_base)
             
-            # Payload final contendo os dados e a assinatura gerada
             payload = {
                 "dados": dados_base,
-                "assinatura_digital": signature
+                "assinatura_digital": assinatura
             }
-            
-            # Correção no nome da variável local do escopo de envio do payload
-            payload["assinatura_digital"] = assinatura
             
             with st.spinner("Enviando dados sob canal criptografado..."):
                 try:
                     headers = {'Content-Type': 'application/json', 'X-Requested-With': 'Streamlit App'}
                     resposta = requests.post(URL_GRAVACAO, data=json.dumps(payload), headers=headers, timeout=10)
                     
-                    # Verificação robusta: Aceita retornos de sucesso tanto em formato texto quanto estruturas JSON vazadas
                     if resposta.status_code == 200 and ("sucesso" in resposta.text.lower() or "success" in resposta.text.lower()):
-                        st.success(f"Avaliação enviada com sucesso!")
+                        st.success("Avaliação enviada com sucesso!")
                         st.session_state["limpar_voto"] = True
                         st.cache_data.clear()
                         time.sleep(1.0)
