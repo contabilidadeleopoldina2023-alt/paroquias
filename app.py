@@ -11,7 +11,7 @@ import secrets
 import logging
 from io import StringIO
 
-# Configuração de Logs internos
+# Configuração de Logs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -21,17 +21,16 @@ st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}
 st.title("🏆 Ranking das Paróquias 2026")
 st.markdown("Monitoramento anual contínuo com consolidação de média progressiva bimestral.")
 
-# --- SEGREDOS E CONFIGURAÇÕES DA APLICAÇÃO ---
-# Carregamento via st.secrets com fallback automático para as credenciais padrão
-SPREADSHEET_ID = st.secrets.get("SPREADSHEET_ID", "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80")
-URL_GRAVACAO = st.secrets.get("URL_GRAVACAO", "https://script.google.com/macros/s/AKfycbzHHD5Nd-D21trEdpeaEJhREmh4loGYCEuD2J38NCfZ9oNBeguE4fgjhEIpdchdlf9r/exec")
-ADMIN_PASSWORD_HASH = st.secrets.get("ADMIN_PASSWORD_HASH", "2264c18c94622723c31677c7f466b03657b98f244ffdf4a837077e68fa7075fb")
-API_SECRET_KEY_RAW = st.secrets.get("API_SECRET_KEY", "28031942")
+# --- SEGREDOS DA APLICAÇÃO ---
+SPREADSHEET_ID = str(st.secrets.get("SPREADSHEET_ID", "1QzKhdsqMv4lZp06jfZ_bYXz4_1kA7qYaD2PUuQ_3k80")).strip()
+URL_GRAVACAO = str(st.secrets.get("URL_GRAVACAO", "https://script.google.com/macros/s/AKfycbzHHD5Nd-D21trEdpeaEJhREmh4loGYCEuD2J38NCfZ9oNBeguE4fgjhEIpdchdlf9r/exec")).strip()
+ADMIN_PASSWORD_HASH = str(st.secrets.get("ADMIN_PASSWORD_HASH", "2264c18c94622723c31677c7f466b03657b98f244ffdf4a837077e68fa7075fb")).strip().lower()
+API_SECRET_KEY_RAW = str(st.secrets.get("API_SECRET_KEY", "28031942")).strip()
 
-API_SECRET_KEY = str(API_SECRET_KEY_RAW).encode('utf-8')
+API_SECRET_KEY = API_SECRET_KEY_RAW.encode('utf-8')
 URL_LEITURA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv"
 
-# --- LISTA OFICIAL DE PARÓQUIAS (64 itens) ---
+# --- LISTA OFICIAL DE PARÓQUIAS ---
 LISTA_PAROQUIAS = [
     "2. Paróquia do Sr Bom Jesus - ARGIRITA", "3. Paróquia de Santo Antônio - ASTOLFO DUTRA",
     "4. Paróquia de São Franc de Paula - BOA FAMILIA", "5. Paróquia de São Sebastião - CACHOEIRA ALEGRE",
@@ -74,12 +73,20 @@ MAPA_EMOJIS = {
     "A+": "👑 A+", "A": "🟢 A", "B": "🔵 B", "C": "🟡 C", "D": "🟠 D", "E": "🔴 E", "-": "⚪ -"
 }
 
-# --- FUNÇÕES DE SEGURANÇA E TRATAMENTO ---
+# --- FUNÇÃO DE VALIDAÇÃO DE SENHA CORRIGIDA ---
 def verificar_senha(senha_candidata):
     senha_limpa = str(senha_candidata).strip()
-    senha_hash = hashlib.sha256(senha_limpa.encode('utf-8')).hexdigest()
-    hash_esperado = str(ADMIN_PASSWORD_HASH).strip()
-    return hmac.compare_digest(senha_hash, hash_esperado)
+    
+    # 1. Validação via hash SHA-256
+    senha_hash = hashlib.sha256(senha_limpa.encode('utf-8')).hexdigest().lower()
+    if hmac.compare_digest(senha_hash, ADMIN_PASSWORD_HASH):
+        return True
+        
+    # 2. Validação direta contra a chave secreta plana (se fornecida plana no input)
+    if hmac.compare_digest(senha_limpa, API_SECRET_KEY_RAW):
+        return True
+        
+    return False
 
 def gerar_token_assinatura(payload_dict):
     mensagem = json.dumps(payload_dict, sort_keys=True).encode('utf-8')
@@ -168,7 +175,7 @@ def carregar_dados_da_nuvem(url):
         logging.error(f"Falha ao carregar dados externos: {str(e)}")
         return pd.DataFrame()
 
-# Inicializações do Session State
+# Session State
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
 if "limpar_voto" not in st.session_state:
