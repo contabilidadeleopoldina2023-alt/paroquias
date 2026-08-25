@@ -149,11 +149,9 @@ def calcular_ranking_justo_bimestral(row):
     idx_final = max(0, min(idx_final, len(ORDEM_RANKING) - 1))
     return ORDEM_RANKING[idx_final]
 
-# Caching otimizado com TTL de 30s. Removemos o _ts do URL aqui para o cache do Streamlit funcionar corretamente.
 @st.cache_data(ttl=30)
 def carregar_dados_da_nuvem(url_base):
     try:
-        # Adiciona _ts apenas no momento da requisição para furar o cache do Google, mas não afeta o cache do Streamlit
         url_com_timestamp = f"{url_base}&_ts={int(time.time())}"
         headers = {
             "User-Agent": "Mozilla/5.0",
@@ -163,7 +161,8 @@ def carregar_dados_da_nuvem(url_base):
         if res.status_code != 200:
             return pd.DataFrame()
             
-        df = pd.read_csv(StringIO(res.text), dtype=str)
+        # O fillna("") garante que campos vazios não se tornem NaN (float) no Pandas
+        df = pd.read_csv(StringIO(res.text), dtype=str).fillna("")
         if df.empty: return pd.DataFrame()
         
         orig_col = df.columns[0]
@@ -177,7 +176,6 @@ def carregar_dados_da_nuvem(url_base):
         return pd.DataFrame()
 
 def limpar_formularios():
-    """Limpa os checkboxes resetando o session state"""
     for i in range(1, 6):
         st.session_state[f"c{i}"] = False
 
@@ -185,7 +183,6 @@ def limpar_formularios():
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
     
-# Carrega ou inicializa o DataFrame no Session State para permitir Atualização Otimista
 if "df_atual" not in st.session_state or st.session_state.get("force_reload", False):
     st.session_state["df_atual"] = carregar_dados_da_nuvem(URL_LEITURA_BASE)
     st.session_state["force_reload"] = False
@@ -220,7 +217,6 @@ with col_form:
         mes_selecionado = st.selectbox("Selecione o Mês da Avaliação:", MESES)
         paroquia_selecionada = st.selectbox("Selecione a Paróquia:", LISTA_PAROQUIAS)
 
-        # Usando as chaves diretamente no checkbox
         c1 = st.checkbox("1° Saldo em conformidade", key="c1")
         c2 = st.checkbox("2° Anexos em dia", key="c2")
         c3 = st.checkbox("3° MPM em dia", key="c3")
@@ -256,16 +252,12 @@ with col_form:
                     )
                     
                     if resposta.status_code in [200, 302]:
-                        # 1. Atualização Otimista: Injetamos os dados diretamente no DataFrame local
-                        # Isso garante que a UI atualize instantaneamente sem esperar o cache do Google Sheets!
                         chave_pesquisa = limpar_texto(paroquia_selecionada)
                         df_temp = st.session_state["df_atual"].copy()
                         
-                        # Se o dataframe estiver vazio, criamos a estrutura básica
                         if df_temp.empty:
                             df_temp = pd.DataFrame({"Chave_Limpa": [chave_pesquisa]})
                             
-                        # Atualiza ou insere os valores na linha da paróquia
                         col_pontos = f"{mes_selecionado}_Pontos"
                         col_ranking = f"{mes_selecionado}_Ranking"
                         
@@ -274,16 +266,12 @@ with col_form:
                             df_temp.loc[idx, col_pontos] = str(nova_pontuacao)
                             df_temp.loc[idx, col_ranking] = str(nota_mes)
                         else:
-                            # Caso a paróquia nunca tenha recebido nota antes (nova linha)
                             nova_linha = {"Chave_Limpa": chave_pesquisa, col_pontos: str(nova_pontuacao), col_ranking: str(nota_mes)}
                             df_temp = pd.concat([df_temp, pd.DataFrame([nova_linha])], ignore_index=True)
 
-                        # Salva o DataFrame atualizado no estado da sessão
                         st.session_state["df_atual"] = df_temp
-                        
-                        # 2. Limpeza do formulário e cache base
                         limpar_formularios()
-                        st.cache_data.clear() # Na próxima atualização forçada, ele buscará do sheets
+                        st.cache_data.clear()
                         
                         st.success(f"Avaliação de {paroquia_selecionada} salva com sucesso!")
                         time.sleep(1)
@@ -305,7 +293,6 @@ with col_ranking:
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
     
-    # Usa o DataFrame em cache/memória que possui a nossa "Atualização Otimista"
     df_atual = st.session_state.get("df_atual", pd.DataFrame())
     
     if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
@@ -326,11 +313,14 @@ with col_ranking:
     df_ordenado = df_visual.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
     
+    # CRÍTICO PARA O STREAMLIT CLOUD: Força explicitamente o tipo 'str' em todo o dataframe final
+    # Isso impede completamente que o PyArrow crashe por inferir acidentalmente um tipo Float (NaN) no meio dos textos
+    df_final_display = df_ordenado[colunas_visiveis].astype(str)
+    
     st.dataframe(
-        df_ordenado[colunas_visiveis],
+        df_final_display,
         hide_index=True,
         use_container_width=True,
-        height=600,
         column_config={
             "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="large"),
             "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small")
