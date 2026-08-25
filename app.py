@@ -161,7 +161,7 @@ def carregar_dados_da_nuvem(url_base):
         if res.status_code != 200:
             return pd.DataFrame()
             
-        # O fillna("") garante que campos vazios não se tornem NaN (float) no Pandas
+        # O fillna("") blinda o pandas de importar células vazias como NaN (float)
         df = pd.read_csv(StringIO(res.text), dtype=str).fillna("")
         if df.empty: return pd.DataFrame()
         
@@ -277,9 +277,9 @@ with col_form:
                         time.sleep(1)
                         st.rerun()
                     else:
-                        st.error(f"Erro na gravação. Código: {resposta.status_code}")
+                        st.error(f"Erro na gravação. Código de status: {resposta.status_code}")
                 except Exception as e:
-                    st.error("Falha temporária de rede. Tente novamente.")
+                    st.error("Falha de rede. O sistema continuará exibindo a tabela, tente salvar novamente.")
                     logging.error(f"Exceção no envio: {str(e)}")
 
 with col_ranking:
@@ -290,6 +290,7 @@ with col_ranking:
         st.session_state["force_reload"] = True
         st.rerun()
     
+    # Processamento do DataFrame para exibição
     df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
     df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
     
@@ -307,20 +308,31 @@ with col_ranking:
     df_visual["_ordem"] = df_visual["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
     
     df_visual["Ranking_Calculado"] = df_visual["Ranking_Calculado"].map(MAPA_EMOJIS).fillna(MAPA_EMOJIS["E"])
+    
     for m in MESES:
         df_visual[m] = df_visual[m].apply(lambda x: MAPA_EMOJIS[x] if x in MAPA_EMOJIS and x != "" else MAPA_EMOJIS["-"])
     
     df_ordenado = df_visual.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
     colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
     
-    # CRÍTICO PARA O STREAMLIT CLOUD: Força explicitamente o tipo 'str' em todo o dataframe final
-    # Isso impede completamente que o PyArrow crashe por inferir acidentalmente um tipo Float (NaN) no meio dos textos
-    df_final_display = df_ordenado[colunas_visiveis].astype(str)
+    # =======================================================================
+    # BLINDAGEM MÁXIMA CONTRA PYARROW CRASH DO STREAMLIT CLOUD
+    # 1. Copia apenas as colunas que vão ser exibidas
+    df_final_display = df_ordenado[colunas_visiveis].copy()
+    
+    # 2. Converte todas as células para string rigorosamente e preenche vazios 
+    df_final_display = df_final_display.astype(str).fillna("")
+    
+    # 3. Descarta o index antigo e cria um index numérico limpo e sequencial.
+    #    Muitas vezes o PyArrow recusa índices que vieram de um `merge` ou `sort_values`.
+    df_final_display = df_final_display.reset_index(drop=True)
+    # =======================================================================
     
     st.dataframe(
         df_final_display,
         hide_index=True,
         use_container_width=True,
+        height=700,
         column_config={
             "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="large"),
             "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small")
