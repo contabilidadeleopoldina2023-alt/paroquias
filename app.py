@@ -161,7 +161,6 @@ def carregar_dados_da_nuvem(url_base):
         if res.status_code != 200:
             return pd.DataFrame()
             
-        # O fillna("") blinda o pandas de importar células vazias como NaN (float)
         df = pd.read_csv(StringIO(res.text), dtype=str).fillna("")
         if df.empty: return pd.DataFrame()
         
@@ -188,7 +187,8 @@ if "df_atual" not in st.session_state or st.session_state.get("force_reload", Fa
     st.session_state["force_reload"] = False
 
 # --- LAYOUT DO APP ---
-col_form, col_ranking = st.columns([1.1, 1.4])
+# Alterado para INTEIROS para evitar problemas de Type Error em versões Cloud
+col_form, col_ranking = st.columns([11, 14])
 
 with col_form:
     st.subheader("📝 Votação Mensal")
@@ -279,7 +279,7 @@ with col_form:
                     else:
                         st.error(f"Erro na gravação. Código de status: {resposta.status_code}")
                 except Exception as e:
-                    st.error("Falha de rede. O sistema continuará exibindo a tabela, tente salvar novamente.")
+                    st.error("Falha de rede. Tente salvar novamente.")
                     logging.error(f"Exceção no envio: {str(e)}")
 
 with col_ranking:
@@ -290,51 +290,43 @@ with col_ranking:
         st.session_state["force_reload"] = True
         st.rerun()
     
-    # Processamento do DataFrame para exibição
-    df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
-    df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
-    
-    df_atual = st.session_state.get("df_atual", pd.DataFrame())
-    
-    if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
-        df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
-    
-    for m in MESES:
-        df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes_planilha(r, m), axis=1)
+    # Capturando erros de Pandas/Streamlit para exibir o real motivo em vez do erro censurado
+    try:
+        df_exibicao = pd.DataFrame({"Paróquia / Instituição": LISTA_PAROQUIAS})
+        df_exibicao["Chave_Limpa"] = df_exibicao["Paróquia / Instituição"].apply(limpar_texto)
         
-    df_exibicao["Ranking_Calculado"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
-    
-    df_visual = df_exibicao.copy()
-    df_visual["_ordem"] = df_visual["Ranking_Calculado"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
-    
-    df_visual["Ranking_Calculado"] = df_visual["Ranking_Calculado"].map(MAPA_EMOJIS).fillna(MAPA_EMOJIS["E"])
-    
-    for m in MESES:
-        df_visual[m] = df_visual[m].apply(lambda x: MAPA_EMOJIS[x] if x in MAPA_EMOJIS and x != "" else MAPA_EMOJIS["-"])
-    
-    df_ordenado = df_visual.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
-    colunas_visiveis = ["Paróquia / Instituição", "Ranking_Calculado"] + MESES
-    
-    # =======================================================================
-    # BLINDAGEM MÁXIMA CONTRA PYARROW CRASH DO STREAMLIT CLOUD
-    # 1. Copia apenas as colunas que vão ser exibidas
-    df_final_display = df_ordenado[colunas_visiveis].copy()
-    
-    # 2. Converte todas as células para string rigorosamente e preenche vazios 
-    df_final_display = df_final_display.astype(str).fillna("")
-    
-    # 3. Descarta o index antigo e cria um index numérico limpo e sequencial.
-    #    Muitas vezes o PyArrow recusa índices que vieram de um `merge` ou `sort_values`.
-    df_final_display = df_final_display.reset_index(drop=True)
-    # =======================================================================
-    
-    st.dataframe(
-        df_final_display,
-        hide_index=True,
-        use_container_width=True,
-        height=700,
-        column_config={
-            "Paróquia / Instituição": st.column_config.TextColumn("Paróquia / Instituição", width="large"),
-            "Ranking_Calculado": st.column_config.TextColumn("Rank Geral 🏆", width="small")
-        }
-    )
+        df_atual = st.session_state.get("df_atual", pd.DataFrame())
+        
+        if not df_atual.empty and "Chave_Limpa" in df_atual.columns:
+            df_exibicao = df_exibicao.merge(df_atual, on="Chave_Limpa", how="left")
+        
+        for m in MESES:
+            df_exibicao[m] = df_exibicao.apply(lambda r: obter_nota_mes_planilha(r, m), axis=1)
+            
+        df_exibicao["Rank Geral 🏆"] = df_exibicao.apply(calcular_ranking_justo_bimestral, axis=1)
+        
+        df_visual = df_exibicao.copy()
+        df_visual["_ordem"] = df_visual["Rank Geral 🏆"].apply(lambda x: ORDEM_RANKING.index(x) if x in ORDEM_RANKING else 0)
+        
+        df_visual["Rank Geral 🏆"] = df_visual["Rank Geral 🏆"].map(MAPA_EMOJIS).fillna(MAPA_EMOJIS["E"])
+        
+        for m in MESES:
+            df_visual[m] = df_visual[m].apply(lambda x: MAPA_EMOJIS[x] if x in MAPA_EMOJIS and x != "" else MAPA_EMOJIS["-"])
+        
+        df_ordenado = df_visual.sort_values(by=["_ordem", "Paróquia / Instituição"], ascending=[False, True])
+        colunas_visiveis = ["Paróquia / Instituição", "Rank Geral 🏆"] + MESES
+        
+        df_final_display = df_ordenado[colunas_visiveis].copy()
+        df_final_display = df_final_display.astype(str).fillna("")
+        
+        # TRANSFORMA A PARÓQUIA NO ÍNDICE. 
+        # Isso esconde os números laterais nativamente no Pandas, compatível com QUALQUER Streamlit!
+        df_final_display.set_index("Paróquia / Instituição", inplace=True)
+        
+        st.dataframe(
+            df_final_display,
+            use_container_width=True,
+            height=700
+        )
+    except Exception as erro_interno:
+        st.error(f"Erro ao processar a tabela. Motivo exato capturado: {str(erro_interno)}")
